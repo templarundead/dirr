@@ -145,7 +145,7 @@ For xterm-256color formats:
     // magenta: sound-only multimedia files
     R"(byext(5i *.mid *.mod *.mtm *.s3m *.xm* *.mp[23] *.wav *.ogg *.smp *.au *.ult *.669 *.aac *.spc *.nsf *.wma))"
     // brown: programming
-    R"(byext(6i *.bas *.pas *.php *.phtml *.pl *.rb *.c *.cpp *.cc *.asm *.s *.inc *.h *.hh *.pov *.irc *.hpp))"
+    R"(byext(6i *.bas *.pas *.php *.phtml *.pl *.rb *.c *.cpp *.cc *.asm *.s *.inc *.h *.hh *.pov *.irc *.hpp *.v))"
     R"(byext(6i *.src *.pp *.p *.mak *.in *.am))"
     R"(byext(6i makefile))"
     R"(byext(201BA configure *.sh))"
@@ -157,7 +157,7 @@ For xterm-256color formats:
     R"(byext(1A7i *.tar *.gz *.xz *.bz *.brotli *.bz2 *.zip *.arj *.lzh *.lha *.rar *.deb *.rpm *.7z *.lzma))"
     // bright magenta: image and video files
     R"(byext(Di *.gif *.bmp *.mpg *.mpeg *.mp4 *.avi *.ogm *.ogv *.mkv *.asf *.x?m *.mov *.tga *.png *.tif))"
-    R"(byext(Di *.wmv *.pcx *.lbm *.img *.jpg *.jpeg *.fl\w *.rm *.tiff))"
+    R"(byext(Di *.wmv *.pcx *.lbm *.img *.jpg *.jpeg *.jxl *.fl\w *.rm *.tiff))"
     // red background and yellow: files with clear mistakes in filenames
     R"(byext(69D7 * *\?))"
     R"(byext(148 .*))"
