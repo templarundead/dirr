@@ -74,8 +74,8 @@ select_tool() {
 do_echo() {
   op=""
   if test x"$1" = x"-n"; then op="$1"; shift; fi
-  echo $op "$*"
-  echo "$*" >> $DEVNULL
+  echo -e $op "$*"
+  echo -e "$*" >> $DEVNULL
 }
 
 CFLAGS=""
@@ -97,19 +97,19 @@ do_echo ""
 
 do_echo -n "Checking if the determined compiler works... "
 if cc_check '<cstdio>' '' 'for(int a=0; a<10;++a) { for(int a=0; a<5;++a) { } } puts("ok");'; then
-  do_echo Ok
+  do_echo "\e[0;38;5;65mok\e[0m"
 elif cc_check '<cstdio>' '-stdlib=libc++' 'for(int a=0; a<10;++a) { for(int a=0; a<5;++a) { } } std::puts("ok");'; then
-  do_echo Ok, with -stdlib=libc++
+  do_echo "\e[0;38;5;65mok\e[0m", with -stdlib=libc++
   CC="$CC -stdlib=libc++"
   CPP="$CPP -stdlib=libc++"
   CXX="$CXX -stdlib=libc++"
 elif cc_check '<cstdio>' '-stdlib=libstdc++' 'for(int a=0; a<10;++a) { for(int a=0; a<5;++a) { } } std::puts("ok");'; then
-  do_echo Ok, with -stdlib=libstdc++
+  do_echo "\e[0;38;5;65mok\e[0m", with -stdlib=libstdc++
   CC="$CC -stdlib=libstdc++"
   CPP="$CPP -stdlib=libstdc++"
   CXX="$CXX -stdlib=libstdc++"
 else
-  do_echo No
+  do_echo -n "\e[0;38;5;3mno\e[0m\n"
   do_echo "Error: Configure cannot figure out how to use your compiler."
   do_echo "Please try installing some recent version of GCC or Clang."
   exit 1
@@ -123,10 +123,10 @@ cat conftest.h >> config.h
 rm -f conftest.[ch]
 
 AC_FUNC=''
-AC_FUNC="$AC_FUNC statfs sys/vfs.h  statfs sys/statfs.h  statfs sys/mount.h  statfs sys/statvfs.h"
-AC_FUNC="$AC_FUNC ioctl unistd.h  ioctl sys/ioctl.h  ioctl sys/linux_ioctl.h"
+AC_FUNC="$AC_FUNC statfs sys/vfs.h statfs sys/statfs.h  statfs sys/mount.h  statfs sys/statvfs.h"
+AC_FUNC="$AC_FUNC ioctl unistd.h  ioctl sys/ioctl.h ioctl sys/linux_ioctl.h"
 AC_FUNC="$AC_FUNC tcgetattr termios.h"
-AC_FUNC="$AC_FUNC readdir dirent.h  readdir direct.h  readdir dir.h"
+AC_FUNC="$AC_FUNC readdir dirent.h  readdir direct.h readdir dir.h"
 AC_FUNC="$AC_FUNC getgrent grp.h"
 AC_FUNC="$AC_FUNC getpwent pwd.h"
 AC_FUNC="$AC_FUNC getgrgid grp.h"
@@ -145,14 +145,14 @@ function test_func()
 		if [ ! "$ac_test" = "yes" ]; then
 			echo $ac_n Checking for "$ac_f in $ac_inc"...$ac_c
 			if cc_check "<$ac_inc>" '' "void*p  = (void*) $ac_f; "; then
-				echo " yes"
+				echo -e "\e[0;38;5;65m yes\e[0m"
 				echo $ac_n "#define HAVE_$ac_c" >>config.h
 				echo "$ac_f"_"$ac_gi" | sed y/abcdefghijklmnopqrstuvwxyz/ABCDEFGHIJKLMNOPQRSTUVWXYZ/ >> config.h
 				echo $ac_n "#define HAVE_$ac_c" >>config.h
 				echo "$ac_f" | sed y/abcdefghijklmnopqrstuvwxyz/ABCDEFGHIJKLMNOPQRSTUVWXYZ/ >> config.h
 				eval "ac_has_$ac_g=yes"
 			else
-				echo " no"
+				echo -e "\e[0;38;5;3m no\e[0m"
 				echo $ac_n "#undef HAVE_$ac_c" >> config.h
 				echo "$ac_f"_"$ac_gi" | sed y/abcdefghijklmnopqrstuvwxyz/ABCDEFGHIJKLMNOPQRSTUVWXYZ/ >> config.h
 			fi
@@ -172,10 +172,10 @@ for ext in c++20 c++2a gnu++20 gnu++2a c++17 c++1z gnu++17 gnu++1z; do
   if [ "$found_ext" = "" ]; then
     do_echo -n "Checking for -std=$ext... "
     if cc_check '<cstdio>' "-std=$ext" ''; then
-      do_echo Yes
+          do_echo -n "\e[0;38;5;65myes\e[0m\n"
       found_ext=$ext
     else
-      do_echo No
+          do_echo -n "\e[0;38;5;3mno\e[0m\n"
     fi
   fi
 done
@@ -187,29 +187,29 @@ fi
 
 do_echo -n "Checking for std::shared_timed_mutex without -pthread... "
 if cc_check '<shared_mutex>' "$CPPFLAGS" 'std::shared_timed_mutex test; test.lock_shared(); test.unlock_shared(); test.lock(); test.unlock();'; then
-  do_echo Yes
+      do_echo -n "\e[0;38;5;65myes\e[0m\n"
 else
-  do_echo No
+      do_echo -n "\e[0;38;5;3mno\e[0m\n"
   do_echo -n "Checking for std::shared_timed_mutex with -pthread... "
   if cc_check '<shared_mutex>' "$CPPFLAGS -pthread" 'std::shared_timed_mutex test; test.lock_shared(); test.unlock_shared(); test.lock(); test.unlock();'; then
-    do_echo Yes
+        do_echo -n "\e[0;38;5;65myes\e[0m\n"
     LDFLAGS="$LDFLAGS -pthread"
   else
     CPPFLAGS="$CPPFLAGS -DNO_SHARED_TIMED_MUTEX"
-    do_echo No
+        do_echo -n "\e[0;38;5;3mno\e[0m\n"
     do_echo "Warning: Your compiler supports c++20, but not std::shared_timed_mutex, which was introduced already in c++14"
     
     do_echo -n "Checking for std::mutex without -pthread... "
     if cc_check '<mutex>' "$CPPFLAGS" 'std::mutex test; test.lock(); test.unlock();'; then
-      do_echo Yes
+          do_echo -n "\e[0;38;5;65myes\e[0m\n"
     else
-      do_echo No
+          do_echo -n "\e[0;38;5;3mno\e[0m\n"
       do_echo -n "Checking for std::mutex with -pthread... "
       if cc_check '<mutex>' "$CPPFLAGS -pthread" 'std::mutex test; test.lock(); test.unlock();'; then
-        do_echo Yes
+            do_echo -n "\e[0;38;5;65myes\e[0m\n"
         LDFLAGS="$LDFLAGS -pthread"
       else
-        do_echo No
+            do_echo -n "\e[0;38;5;3mno\e[0m\n"
         CPPFLAGS="$CPPFLAGS -DDFA_DISABLE_MUTEX"
         do_echo "Warning: Your compiler supports c++20, but not std::mutex, which was introduced already in c++11"
       fi
@@ -219,16 +219,16 @@ fi
 
 do_echo -n "Checking for __gnu_cxx::stdio_filebuf... "
 if cc_check '<ext/stdio_filebuf.h>' "$CPPFLAGS" '__gnu_cxx::stdio_filebuf<char> f{1,std::ios_base::out|std::ios_base::binary};std::ostream o{&f};'; then
-  do_echo Yes
+      do_echo -n "\e[0;38;5;65myes\e[0m\n"
   echo "#define HAVE_STDIO_FILEBUF" >> config.h
 else
-  do_echo No
+      do_echo -n "\e[0;38;5;3mno\e[0m\n"
   echo "#undef HAVE_STDIO_FILEBUF" >> config.h
 fi
 
 do_echo -n "Checking for concepts... "
 if cc_check '<type_traits>' "$CPPFLAGS" '} namespace { template<typename T> concept test = std::is_same_v<T, char>; } int foo() {'; then
-  do_echo -n Yes
+    do_echo -n "\e[0;38;5;65myes\e[0m\n"
   if cc_check '<type_traits>' "$CPPFLAGS" '} namespace { template<typename T> concept test = std::is_same_v<T, char>; } int foo() { return test<char>; '; then
     do_echo ""
     echo "#define HAVE_CONCEPTS" >> config.h
@@ -238,14 +238,14 @@ if cc_check '<type_traits>' "$CPPFLAGS" '} namespace { template<typename T> conc
     echo "#define concept static constexpr bool" >> config.h
   fi
 else
-  do_echo No
+      do_echo -n "\e[0;38;5;3mno\e[0m\n"
   do_echo -n "Checking for concepts with -fconcepts... "
   if cc_check '<type_traits>' "$CPPFLAGS -fconcepts" '} namespace { template<typename T> concept test = true; } int foo() {'; then
-    do_echo Yes
+        do_echo -n "\e[0;38;5;65myes\e[0m\n"
     CXX="$CXX -fconcepts"
     echo "#define HAVE_CONCEPTS" >> config.h
   else
-    do_echo No
+        do_echo -n "\e[0;38;5;3mno\e[0m\n"
     do_echo "Warning: You need a compiler that supports c++20 constraints and concepts. Activating kludge..."
     echo "#undef HAVE_CONCEPTS"                  >> config.h
     echo "#define concept static constexpr bool" >> config.h
@@ -265,7 +265,7 @@ if cc_check '<type_traits>' "$CPPFLAGS" 'int r; switch(1) { case 0: [[likely]] r
   echo "#define LIKELY   [[likely]]"   >> config.h
   echo "#define UNLIKELY [[unlikely]]" >> config.h
 else
-  do_echo No
+      do_echo -n "\e[0;38;5;3mno\e[0m\n"
   echo "#define LIKELY "   >> config.h
   echo "#define UNLIKELY " >> config.h
 fi
@@ -281,19 +281,19 @@ EOF
 
 do_echo -n "Checking for char8_t... "
 if cc_check '<type_traits>' "$CPPFLAGS" 'return char8_t{};'; then
-  do_echo Yes
+      do_echo -n "\e[0;38;5;65myes\e[0m\n"
   echo "#define HAVE_CHAR8_T"   >> config.h
 else
-  do_echo No
+      do_echo -n "\e[0;38;5;3mno\e[0m\n"
   echo "#undef HAVE_CHAR8_T"    >> config.h
 fi
 
 do_echo -n "Checking for std::remove_cvref... "
 if cc_check '<type_traits>' "$CPPFLAGS" 'std::remove_cvref_t<int&> i = 5; return i;'; then
-  do_echo Yes
+      do_echo -n "\e[0;38;5;65myes\e[0m\n"
   echo "#define HAVE_REMOVE_CVREF"   >> config.h
 else
-  do_echo No
+      do_echo -n "\e[0;38;5;3mno\e[0m\n"
   echo "#undef HAVE_REMOVE_CVREF"    >> config.h
   cat >> config.h <<EOF
 #include <type_traits>
@@ -309,61 +309,61 @@ fi
 
 do_echo -n "Checking for std::is_trivially_copyable... "
 if cc_check '<type_traits>' "$CPPFLAGS" 'return std::is_trivially_copyable_v<int>;'; then
-  do_echo Yes
+      do_echo -n "\e[0;38;5;65myes\e[0m\n"
   echo "#define HAVE_IS_TRIVIALLY_COPYABLE"   >> config.h
 else
-  do_echo No
+      do_echo -n "\e[0;38;5;3mno\e[0m\n"
   echo "#undef HAVE_IS_TRIVIALLY_COPYABLE"    >> config.h
 fi
 
 do_echo -n "Checking for charconv... "
 if cc_check '<charconv>' "$CPPFLAGS" ''; then
-  do_echo Yes
+      do_echo -n "\e[0;38;5;65myes\e[0m\n"
   echo "#define HAVE_CHARCONV"   >> config.h
 else
-  do_echo No
+      do_echo -n "\e[0;38;5;3mno\e[0m\n"
   echo "#undef HAVE_CHARCONV"    >> config.h
 fi
 
 do_echo -n "Checking for std::string_view... "
 if cc_check '<string_view>' "$CPPFLAGS" 'std::string_view test("kissa",5);'; then
-  do_echo Yes
+      do_echo -n "\e[0;38;5;65myes\e[0m\n"
   echo "#define HAVE_STRINGVIEW" >> config.h
 else
-  do_echo No
+      do_echo -n "\e[0;38;5;3mno\e[0m\n"
   do_echo "Error: You need a compiler that supports c++17 std::string_view."
   echo "#undef HAVE_STRINGVIEW" >> config.h
   CPPFLAGS="$CPPFLAGS -Iworkaround"
 fi
 
-do_echo -n "Checking for -Ofast... "
-if cc_check '<stdio.h>' '-Ofast' ''; then
-  do_echo Yes
-  OPTIM="$OPTIM -Ofast"
-else
-  do_echo No
-  do_echo -n "Checking for -ffast-math... "
-  if cc_check '<string.h>' '-ffast-math' ''; then
-    do_echo Yes
-    OPTIM="$OPTIM -ffast-math"
-  else
-    do_echo No
-  fi
   do_echo -n "Checking for -O3... "
   if cc_check '<stdio.h>' '-O3' ''; then
-    do_echo Yes
+        do_echo -n "\e[0;38;5;65myes\e[0m\n"
     OPTIM="$OPTIM -O3"
   else
-    do_echo No
+        do_echo -n "\e[0;38;5;3mno\e[0m\n"
     do_echo -n "Checking for -O2... "
     if cc_check '<stdio.h>' '-O2' ''; then
-      do_echo Yes
+          do_echo -n "\e[0;38;5;65myes\e[0m\n"
       OPTIM="$OPTIM -O2"
     else
-      do_echo No
+          do_echo -n "\e[0;38;5;3mno\e[0m\n"
     fi
   fi
-fi
+  do_echo -n "Checking for -ffast-math... "
+  if cc_check '<string.h>' '-ffast-math' ''; then
+    do_echo -n "\e[0;38;5;65mYes\e[0m\n"
+    OPTIM="$OPTIM -ffast-math"
+  else
+        do_echo -n "\e[0;38;5;3mno\e[0m\n"
+  fi
+  do_echo -n "Checking for -fstack-arrays... "
+  if cc_check '<string.h>' '-fstack-arrays' ''; then
+        do_echo -n "\e[0;38;5;65myes\e[0m\n"
+    OPTIM="$OPTIM -fstack-arrays"
+  else
+        do_echo -n "\e[0;38;5;3mno\e[0m\n"
+  fi
 
 WARNINGS=""
 CWARNINGS=""
@@ -372,10 +372,10 @@ CXXWARNINGS=""
 if [ "$CC" = "icc" ]; then
   #do_echo -n "Checking for -pch... "
   #if cc_check '<stdio.h>' '-pch' 'int x,y[100];for(x=0; x<100;++x)y[x]=5;'; then
-  #  do_echo Yes
+  #      do_echo -n "\e[0;38;5;65myes\e[0m\n"
   #  OPTIM="$OPTIM -pch"
   #else
-  #  do_echo No
+  #      do_echo -n "\e[0;38;5;3mno\e[0m\n"
   #fi
   true
 else
@@ -383,10 +383,10 @@ else
 
   do_echo -n "Checking for -minline-stringops-dynamically... "
   if cc_check '<string.h>' '-minline-stringops-dynamically' 'char buf1[64],buf2[80]="kissa"; memcpy(buf1,buf2,sizeof(buf2)-strlen(buf2));'; then
-    do_echo Yes
+        do_echo -n "\e[0;38;5;65myes\e[0m\n"
     OPTIM="$OPTIM -minline-stringops-dynamically"
   else
-    do_echo No
+        do_echo -n "\e[0;38;5;3mno\e[0m\n"
   fi
   
   # Removed from the list:
@@ -401,10 +401,10 @@ else
   for s in $T_OPTIM;do
     do_echo -n "Checking for $s... "
     if cc_check '<stdio.h>' "$s" 'int x,y[100];for(x=0; x<100;++x)y[x]=5;'; then
-      do_echo Yes
+          do_echo -n "\e[0;38;5;65myes\e[0m\n"
       OPTIM="$OPTIM $s"
     else
-      do_echo No
+          do_echo -n "\e[0;38;5;3mno\e[0m\n"
     fi
   done
   
@@ -413,10 +413,10 @@ else
   for s in $T_LDFLAGS;do
     do_echo -n "Checking for $s... "
     if cc_check '<stdio.h>' "$s" 'int x,y[100];for(x=0; x<100;++x)y[x]=5;'; then
-      do_echo Yes
+          do_echo -n "\e[0;38;5;65myes\e[0m\n"
       LDFLAGS="$LDFLAGS $s"
     else
-      do_echo No
+          do_echo -n "\e[0;38;5;3mno\e[0m\n"
     fi
   done
   
@@ -445,28 +445,28 @@ else
   for s in $T_WARNINGS;do
     do_echo -n "Checking for $s... "
     if cc_check '<stdio.h>' "$s" ''; then
-      do_echo Yes
+          do_echo -n "\e[0;38;5;65myes\e[0m\n"
       WARNINGS="$WARNINGS $s"
     else
-      do_echo No
+       do_echo -n "\e[0;38;5;3mno\e[0m\n"
     fi
   done
   for s in $T_CWARNINGS;do
     do_echo -n "Checking for $s... "
     if cc_check '<stdio.h>' "$s" ''; then
-      do_echo Yes
+          do_echo -n "\e[0;38;5;65myes\e[0m\n"
       CWARNINGS="$CWARNINGS $s"
     else
-      do_echo No
+          do_echo -n "\e[0;38;5;3mno\e[0m\n"
     fi
   done
   for s in $T_CXXWARNINGS;do
     do_echo -n "Checking for $s... "
     if cc_check '<stdio.h>' "$s" ''; then
-      do_echo Yes
+          do_echo -n "\e[0;38;5;65myes\e[0m\n"
       CXXWARNINGS="$CXXWARNINGS $s"
     else
-      do_echo No
+          do_echo -n "\e[0;38;5;3mno\e[0m\n"
     fi
   done
 fi  
@@ -493,20 +493,12 @@ for dir in . lib util; do
 done &> /dev/null
 
 echo '#endif' >> config.h
-
-
-
-
-
-
 cat << EOF
 
-Configuration finished.
+Configuration finished!
 
 You may want to edit "config.h" now.
-
 After done, issue 'make'. Preferably GNU make.
-
 You can install by typing 'make install'.
 You can uninstall later by typing 'make uninstall'.
 
