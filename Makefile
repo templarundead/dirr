@@ -12,15 +12,16 @@ include Makefile.sets
 
 # Building for native:
 #HOST=
-#LDFLAGS +=
+LDFLAGS +=-static # for statically building
 
 #CXX=$(HOST)g++
 #CC=$(HOST)gcc
 #CPP=$(HOST)gcc
 
-#CXX += -flto
+CXX += -flto
 #CXX += -pg -flto
 #OPTIM= -O2 -finline
+OPTIM= -O3 -ffast-math
 
 #OPTIM=-Og -fno-inline
 #CXXFLAGS += -fsanitize=address
@@ -63,7 +64,7 @@ INSTALLPROGS=$(PROG)
 $(PROG): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^
 
-argh.o: argh.cc printf.o
+argh.o: argh.cc
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -DColourPrints -o $@ -c $<
 
 clean:
