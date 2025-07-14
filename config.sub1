@@ -6,8 +6,7 @@
 if (echo "testing\c"; echo 1,2,3) | grep c >/dev/null; then
   # Many systems lack -e. This is from GNU configure.
   if (echo -n testing; echo 1,2,3) | sed s/-n/xn/ | grep xn >/dev/null; then
-    ac_n= ac_c='
-'
+    ac_n= ac_c=''
   else
     ac_n=-n ac_c=
   fi
