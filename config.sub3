@@ -11,12 +11,12 @@ for ac_f in $AC_INCLUDES; do
 	echo $ac_n Checking for $ac_f"..."$ac_c
 	echo "#include <$ac_f>" | $CPP -E - 1>/dev/null 2>&1
 	if test "$?" = 0; then
-		echo " found"
+		echo -e " \e[0;38;5;65mfound\e[0m"
 		eval "ac_has_$ac_g=yes"
 		echo $ac_n "#define HAVE_"$ac_c >> conftest.h
 		echo "$ac_g " | sed y/abcdefghijklmnopqrstuvwxyz/ABCDEFGHIJKLMNOPQRSTUVWXYZ/ >>conftest.h
 	else
-		echo " no"
+		echo -e " \e[0;38;5;3mno\e[0m"
 		eval "ac_has_$ac_g=no"
 	fi
 done
