@@ -733,7 +733,7 @@ static void PrintAllFilesCollectedSoFar()
         // Using binary search, find the shortest number of lines
         // where printing still works.
         unsigned columns = 0;
-        auto acceptable = [&f,&columns](unsigned lines)
+        auto acceptable = [&columns](unsigned lines)
         {
             Longest.clear();
             unsigned column = 1, line = 0, total_width = 0;
