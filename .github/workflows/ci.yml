@@ -54,3 +54,48 @@ jobs:
 
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
+
+  debian-forky-gcc-matrix:
+    name: Debian 14 / aarch64 / GCC ${{ matrix.gcc }}.x
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: debian:forky
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        gcc: ['14', '15', '16']
+    env:
+      CC: gcc-${{ matrix.gcc }}
+      CXX: g++-${{ matrix.gcc }}
+    steps:
+      - name: Install Debian toolchains and build tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates cmake git make \
+            gcc-${{ matrix.gcc }} g++-${{ matrix.gcc }}
+
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Show target and compiler versions
+        run: |
+          printf 'Architecture: %s (%s)\n' "$(uname -m)" "$(dpkg --print-architecture)"
+          "$CC" --version
+          "$CXX" --version
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDIRR_ENABLE_LTO=ON
+
+      - name: Build
+        run: |
+          if cmake --build build --parallel 2 > build.log 2>&1; then
+            tail -n 20 build.log
+          else
+            tail -n 80 build.log
+            exit 1
+          fi
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
