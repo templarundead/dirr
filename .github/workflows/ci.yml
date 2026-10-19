@@ -52,6 +52,10 @@ jobs:
             ${{ matrix.cmake_options }} > configure.log 2>&1; then
             details=$(tail -n 80 configure.log | tr '\n' ' ' | sed 's/%/%25/g')
             echo "::error title=Configuration output::$details"
+            if [ -f build/CMakeFiles/CMakeError.log ]; then
+              probe=$(tail -n 80 build/CMakeFiles/CMakeError.log | tr '\n' ' ' | sed 's/%/%25/g')
+              echo "::error title=Failed compiler probe::$probe"
+            fi
             exit 1
           fi
           cat configure.log
