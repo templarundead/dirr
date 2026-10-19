@@ -36,6 +36,19 @@ make -j
 
 The legacy configure script now requires C++23 as well. CMake is preferred because it keeps generated files in the build directory and provides the smoke-test suite.
 
+## Prebuilt Linux binaries
+
+Pushing a version tag matching the CMake project version (for example, `v3.39.1`) creates a GitHub Release with tested Linux binaries for `x86_64` and `aarch64`, in both dynamically linked and static variants. Each `.tar.gz` contains the executable and `COPYING`; the release also includes a `SHA256SUMS` file. Dynamic builds are produced on Ubuntu 24.04 and may require a similarly recent glibc. Static builds are linked with `-static`; glibc can still consult system NSS modules for user/group-name lookups.
+
+The same packages are uploaded as downloadable GitHub Actions artifacts (90-day retention). Run the **Release Linux binaries** workflow manually to build artifacts without publishing a release.
+
+To publish a release for the current project version:
+
+```sh
+git tag v3.39.1
+git push origin v3.39.1
+```
+
 ## Usage
 
 ```sh
