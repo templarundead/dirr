@@ -7,7 +7,7 @@
 
 using namespace std;
 
-#include "config.h"
+#include <config.h>
 #include "cons.hh"
 #include "setfun.hh"
 

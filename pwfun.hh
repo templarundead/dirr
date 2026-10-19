@@ -1,21 +1,17 @@
-#ifndef dirr3_pwfun_h
-#define dirr3_pwfun_h
+#pragma once
+#include <expected>
+#include <optional>
 #include <string>
 
-/***********************************************
- *
- * Getpwuid(uid)
- * Getgrgid(gid)
- *
- *   Get user and group name, quickly using binary search
- *
- * ReadGidUid()
- *
- *   Builds the data structures for Getpwuid() and Getgrgid()
- *
- *************************************************************/
+// Modern C++23 user/group lookup.
+// Returns std::string (empty = not found) for compatibility,
+// plus new helpers returning std::optional / std::expected.
 
-extern std::string Getpwuid(int uid);
-extern std::string Getgrgid(int gid);
+std::string Getpwuid(int uid);
+std::string Getgrgid(int gid);
 
-#endif
+[[nodiscard]] std::optional<std::string> try_getpwuid(int uid);
+[[nodiscard]] std::optional<std::string> try_getgrgid(int gid);
+
+std::expected<std::string, std::string> expect_getpwuid(int uid);
+std::expected<std::string, std::string> expect_getgrgid(int gid);

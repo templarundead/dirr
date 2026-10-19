@@ -1,27 +1,28 @@
-#ifndef dirr3_setfun_hh
-#define dirr3_setfun_hh
+#pragma once
 
 #include <string>
 #include <string_view>
+
+// Modern C++23 colour-setting interface.
+// Uses enum class, std::string_view, concepts and [[nodiscard]].
 
 #define ColorDescrs(o) o(TEXT,"txt") o(OWNER,"owner") o(GROUP,"group") o(NRLINK,"nrlink") \
                        o(DATE,"date") o(NUM,"num") o(DESCR,"descr") o(SIZE,"size")
 #define ColorModes(o)  o(TYPE,"type") o(MODE,"mode") o(INFO,"info")
 
-#define o(val,str) val,
-enum class ColorDescr { ColorDescrs(o) };
-enum class ColorMode  { ColorModes(o) };
-#undef o
-
-using std::string;
+#define EXPAND_ENUM(val,str) val,
+enum class ColorDescr { ColorDescrs(EXPAND_ENUM) };
+enum class ColorMode  { ColorModes(EXPAND_ENUM) };
+#undef EXPAND_ENUM
 
 extern bool Dumping;
-
 extern bool WasNormalColor;
-extern int GetModeColor(ColorMode m, signed char Chr);
-extern int GetDescrColor(ColorDescr d, int index);
-extern void PrintSettings();
 
-extern int NameColor(std::string_view name, int default_color);
+// Keep legacy using for compatibility with old code that uses unqualified `string`
+using std::string;
 
-#endif
+int GetModeColor(ColorMode mode, signed char ch);
+int GetDescrColor(ColorDescr descr, int index);
+void PrintSettings();
+
+[[nodiscard]] int NameColor(std::string_view name, int default_color);

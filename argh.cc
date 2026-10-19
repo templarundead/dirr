@@ -38,13 +38,13 @@ arghandler::arghandler(const char *defopts, int argc, const char *const *argv)
     bool terminated = false;
 
     /* If you have 5 parameters and want to skip 2 parameters
-     * at the beginning, specify argc as: (2-argc)*MAX_ARGC-2
+     * at the beginning, specify argc as: (2-argc)*max_argc-2
      */
     if(argc < 0)
     {
         argc = -argc;
-        argv += (argc%MAX_ARGC);
-        argc /= MAX_ARGC;
+        argv += (argc % max_argc);
+        argc /= max_argc;
     }
     while(--argc)
     {
@@ -69,16 +69,13 @@ arghandler::arghandler(const char *defopts, int argc, const char *const *argv)
     }
 }
 
-arghandler::~arghandler()
-{
-    for(auto& o: options) delete o.handler;
-}
+arghandler::~arghandler() = default;
 
 void arghandler::subadd(const char *Short, const char *Long, const std::string &Descr, argfun handler)
 {
     options.emplace_back(Short ? Short+1 : "",
                          Long ? Long+2 : "",
-                         Descr, handler);
+                         Descr, std::move(handler));
 }
 
 void arghandler::parse()

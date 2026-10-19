@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include "config.h"
+#include <config.h>
 
 namespace PrintfPrivate
 {

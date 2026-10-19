@@ -1,0 +1,58 @@
+name: Build and test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.compiler }} / ${{ matrix.configuration }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: GCC
+            cxx: g++
+            configuration: Release
+            build_type: Release
+            cmake_options: -DDIRR_ENABLE_LTO=OFF
+          - compiler: Clang
+            cxx: clang++
+            configuration: Release
+            build_type: Release
+            cmake_options: -DDIRR_ENABLE_LTO=OFF
+          - compiler: GCC
+            cxx: g++
+            configuration: AddressSanitizer + UBSan
+            build_type: Debug
+            cmake_options: -DDIRR_ENABLE_LTO=OFF -DDIRR_ENABLE_SANITIZER=ON
+    env:
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Show compiler version
+        run: $CXX --version
+
+      - name: Configure CMake
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          ${{ matrix.cmake_options }}
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure

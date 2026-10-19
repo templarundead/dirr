@@ -167,7 +167,7 @@ test_func $AC_FUNC
 
 
 found_ext=""
-for ext in c++20 c++2a gnu++20 gnu++2a c++17 c++1z gnu++17 gnu++1z; do
+for ext in c++23 gnu++23 c++2b gnu++2b; do
 #gnu++11 gnu++0x c++11 c++0x
   if [ "$found_ext" = "" ]; then
     do_echo -n "Checking for -std=$ext... "
@@ -180,9 +180,19 @@ for ext in c++20 c++2a gnu++20 gnu++2a c++17 c++1z gnu++17 gnu++1z; do
   fi
 done
 if [ "$found_ext" = "" ]; then
-  do_echo "Error: You need a compiler that supports C++ version c++20 or newer."
+  do_echo "Error: You need a compiler and standard library that support C++23."
 else
   CPPFLAGS="$CPPFLAGS -std=$found_ext"
+fi
+
+do_echo -n "Checking for std::expected (C++23)... "
+if cc_check '<expected>' "$CPPFLAGS" 'std::expected<int,int> value = 42; return value.value() == 42 ? 0 : 1;'; then
+  do_echo -n "\e[0;38;5;65myes\e[0m\n"
+  echo "#define HAVE_EXPECTED" >> config.h
+else
+  do_echo -n "\e[0;38;5;3mno\e[0m\n"
+  do_echo "Error: The C++23 standard library must provide <expected>."
+  exit 1
 fi
 
 do_echo -n "Checking for std::shared_timed_mutex without -pthread... "
@@ -197,7 +207,7 @@ else
   else
     CPPFLAGS="$CPPFLAGS -DNO_SHARED_TIMED_MUTEX"
         do_echo -n "\e[0;38;5;3mno\e[0m\n"
-    do_echo "Warning: Your compiler supports c++20, but not std::shared_timed_mutex, which was introduced already in c++14"
+    do_echo "Warning: Your compiler supports C++23, but not std::shared_timed_mutex, which was introduced already in c++14"
     
     do_echo -n "Checking for std::mutex without -pthread... "
     if cc_check '<mutex>' "$CPPFLAGS" 'std::mutex test; test.lock(); test.unlock();'; then
@@ -211,7 +221,7 @@ else
       else
             do_echo -n "\e[0;38;5;3mno\e[0m\n"
         CPPFLAGS="$CPPFLAGS -DDFA_DISABLE_MUTEX"
-        do_echo "Warning: Your compiler supports c++20, but not std::mutex, which was introduced already in c++11"
+        do_echo "Warning: Your compiler supports C++23, but not std::mutex, which was introduced already in c++11"
       fi
     fi
   fi
@@ -246,7 +256,7 @@ else
     echo "#define HAVE_CONCEPTS" >> config.h
   else
         do_echo -n "\e[0;38;5;3mno\e[0m\n"
-    do_echo "Warning: You need a compiler that supports c++20 constraints and concepts. Activating kludge..."
+    do_echo "Warning: You need a compiler that supports C++23 constraints and concepts. Activating kludge..."
     echo "#undef HAVE_CONCEPTS"                  >> config.h
     echo "#define concept static constexpr bool" >> config.h
   fi

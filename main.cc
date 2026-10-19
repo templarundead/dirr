@@ -17,7 +17,7 @@ static const char VERSIONSTR[] =
 #include <cerrno>
 #include <csignal>
 
-#include "config.h"
+#include <config.h>
 #include "pwfun.hh"
 #include "setfun.hh"
 #include "strfun.hh"
@@ -29,9 +29,10 @@ static const char VERSIONSTR[] =
 #include "argh.hh"
 
 #include <algorithm>
-#include <vector>
+#include <memory>
 #include <string>
-#include <list>
+#include <system_error>
+#include <vector>
 
 #ifdef HAVE_SYS_TYPES_H
 # include <sys/types.h>
@@ -831,34 +832,31 @@ static void SingleFile(string&& Buffer)
     }
     #endif
 
-    StatType Stat;
-    #ifdef S_ISLNK
-    if(Links ? (LStatFunc(Buffer.c_str(), &Stat) == -1)
-             : (StatFunc(Buffer.c_str(), &Stat) == -1))
-        Gprintf("%s: %s (%d)\n", Buffer, GetError(errno), errno);
-    #else
-    if(LStatFunc(Buffer.c_str(), &Stat) == -1))
-        Gprintf("%s: %s (%d)\n", Buffer, GetError(errno), errno);
-    #endif
-    else
-    {
-        if(PreScan)
-        {
+    auto stat_result = try_lstat_path(Buffer);
+#ifdef S_ISLNK
+    if (!Links)
+        stat_result = try_stat_path(Buffer);
+#endif
+    if (!stat_result) {
+        const std::error_code error = stat_result.error();
+        const std::string message = error.message();
+        Gprintf("%s: %s (%d)\n", Buffer, message, error.value());
+    } else {
+        StatType Stat = *stat_result;
+        if (PreScan) {
             CollectedFilesForCurrentDirectory.emplace_back(
                 Stat,
-                #ifdef DJGPP
+#ifdef DJGPP
                 Bla.ff_attrib,
-                #endif
+#endif
                 std::move(Buffer));
-        }
-        else
-        {
+        } else {
             Dumping = true;
             UpdateEstimations(Longest.front(), Buffer, Stat);
             TellMe(Stat, std::move(Buffer)
-                   #ifdef DJGPP
+#ifdef DJGPP
                    , attr
-                   #endif
+#endif
                   );
             Dumping = false;
         }
@@ -907,39 +905,39 @@ static void DirChangeCheck(std::string_view Source)
 // Will not call recursively.
 static void ScanDir(std::string&& Source) // Directory to list
 {
-    DIR *dir = nullptr;
+    using DirectoryHandle = std::unique_ptr<DIR, decltype(&closedir)>;
+    DirectoryHandle dir(nullptr, &closedir);
 
     #ifdef DJGPP
     if(!Source.empty() && Source.back() == ':')
         Source += '.';
     #endif
 
-    // Was null. It was not a directory, or could not be read.
-    // Or, when we're not supposed to read its contents
-    if(!Contents || ((dir = opendir(Source.c_str())) == NULL
-    && (
-    #if defined(DJGPP) || (defined(SUNOS)||defined(__sun)||defined(SOLARIS))
-        errno==EACCES  ||
-    #endif
-        errno==ENOENT  ||   /* Might have been a link */
-        errno==ENOTDIR ||
-        errno==ELOOP        /* For circular loops */
-      )))
-    {
-        // Then list it as a file.
-        if(dir) closedir(dir);
+    // If contents are requested, try opening the directory once. Some errors
+    // mean the operand should be shown as a file (e.g. a dangling symlink).
+    bool list_as_file = !Contents;
+    if (Contents) {
+        dir.reset(opendir(Source.c_str()));
+        if (!dir && (
+#if defined(DJGPP) || defined(SUNOS) || defined(__sun) || defined(SOLARIS)
+            errno == EACCES ||
+#endif
+            errno == ENOENT || errno == ENOTDIR || errno == ELOOP)) {
+            list_as_file = true;
+        }
+    }
 
+    if (list_as_file) {
         std::string_view Tmp = DirOnly(Source);
-        if(Tmp.empty()) Tmp = "./";
+        if (Tmp.empty()) Tmp = "./";
         DirChangeCheck(Tmp);
-
         SingleFile(std::move(Source));
         return;
     }
 
     if(!dir && (Source.empty() || Source.back() != '/'))
     {
-        dir = opendir((Source + "/").c_str());
+        dir.reset(opendir((Source + "/").c_str()));
     }
 
     if(!dir)
@@ -952,7 +950,7 @@ static void ScanDir(std::string&& Source) // Directory to list
     // Directory successfully opened.
     DirChangeCheck(std::string(Source)); // Operates on a copy of Source
 
-    for(struct dirent *ent = readdir(dir); ent != NULL; ent = readdir(dir))
+    for(struct dirent *ent = readdir(dir.get()); ent != NULL; ent = readdir(dir.get()))
     {
         if(!ShowDotFiles && ent->d_name[0] == '.') continue;
 
@@ -963,12 +961,12 @@ static void ScanDir(std::string&& Source) // Directory to list
         SingleFile(std::move(Buffer));
     }
 
-    if(closedir(dir) != 0)
+    if(closedir(dir.release()) != 0)
         Gprintf("\nclosedir(%s) - error: %d (%s)\n", Source,
                 errno, GetError(errno));
 }
 
-static std::list<std::string> FilesToList_FromCommandline;
+static std::vector<std::string> FilesToList_FromCommandline;
 
 static void DumpDirs()
 {

@@ -1,125 +1,136 @@
-#include "config.h"
-#include "setfun.hh"
-#include "cons.hh"
 #include "colouring.hh"
+#include <config.h>
+#include "cons.hh"
 #include "printf.hh"
+#include "setfun.hh"
 
-int GetNameAttr(const StatType &Stat, std::string_view fn)
-{
-    int NameAttr = NameColor(fn, -1);
-    if(NameAttr != -1) return NameAttr;
+#include <array>
+#include <string_view>
 
-    #ifdef S_ISLNK
-    if(S_ISLNK(Stat.st_mode))       return GetModeColor(ColorMode::TYPE, -'l');
+int GetNameAttr(const StatType& st, std::string_view fn) {
+    if (int col = NameColor(fn, -1); col != -1) [[likely]]
+        return col;
+
+#ifdef S_ISLNK
+    if (S_ISLNK(st.st_mode)) [[unlikely]]
+        return GetModeColor(ColorMode::TYPE, -'l');
     else
-    #endif
-         if(S_ISDIR(Stat.st_mode))  return GetModeColor(ColorMode::TYPE, -'d');
-    else if(S_ISCHR(Stat.st_mode))  return GetModeColor(ColorMode::TYPE, -'c');
-    else if(S_ISBLK(Stat.st_mode))  return GetModeColor(ColorMode::TYPE, -'b');
-    #ifdef S_ISFIFO
-    else if(S_ISFIFO(Stat.st_mode)) return GetModeColor(ColorMode::TYPE, -'p');
-    #endif
-    #ifdef S_ISSOCK
-    else if(S_ISSOCK(Stat.st_mode)) return GetModeColor(ColorMode::TYPE, -'s');
-    #endif
-    #ifdef S_ISDOOR
-    else if(S_ISDOOR(Stat.st_mode)) return GetModeColor(ColorMode::TYPE, -'D');
-    #endif
-    else if(Stat.st_mode& (S_IXUSR|S_IXGRP|S_IXOTH)) return GetModeColor(ColorMode::TYPE, -'x');
-    else if(S_ISREG(Stat.st_mode))  return GetModeColor(ColorMode::TYPE, -'-');
+#endif
+    if (S_ISDIR(st.st_mode))  return GetModeColor(ColorMode::TYPE, -'d');
+    else if (S_ISCHR(st.st_mode)) return GetModeColor(ColorMode::TYPE, -'c');
+    else if (S_ISBLK(st.st_mode)) return GetModeColor(ColorMode::TYPE, -'b');
+#ifdef S_ISFIFO
+    else if (S_ISFIFO(st.st_mode)) return GetModeColor(ColorMode::TYPE, -'p');
+#endif
+#ifdef S_ISSOCK
+    else if (S_ISSOCK(st.st_mode)) return GetModeColor(ColorMode::TYPE, -'s');
+#endif
+#ifdef S_ISDOOR
+    else if (S_ISDOOR(st.st_mode)) return GetModeColor(ColorMode::TYPE, -'D');
+#endif
+    else if (st.st_mode & (S_IXUSR|S_IXGRP|S_IXOTH))
+        return GetModeColor(ColorMode::TYPE, -'x');
+    else if (S_ISREG(st.st_mode))
+        return GetModeColor(ColorMode::TYPE, -'-');
 
-    return GetModeColor(ColorMode::TYPE, -'?'); // Unknown type
+    return GetModeColor(ColorMode::TYPE, -'?');
 }
 
-int PrintAttr(const StatType &Stat, char Attrs
-#ifdef DJGPP
-    , unsigned int dosattr
-#endif
-)
-{
-    #define PutSet(c) do { GetModeColor(ColorMode::MODE, c);Gputch(c);Len++; } while(0)
-    int Len = 0;
-    switch(Attrs)
-    {
+int PrintAttr(const StatType& st, char attrs) {
+    int len = 0;
+
+    // Lambda replaces the old PutSet macro — type-safe, no macro hygiene issues.
+    auto put_set = [&](char c) {
+        GetModeColor(ColorMode::MODE, c);
+        Gputch(c);
+        ++len;
+    };
+
+    switch (attrs) {
         case '0':
-#ifdef DJGPP
-            if(dosattr&0x20)PutSet('A');else PutSet('-');
-            if(dosattr&0x02)PutSet('H');else PutSet('-');
-            if(dosattr&0x04)PutSet('S');else PutSet('-');
-            if(dosattr&0x01)PutSet('R');else PutSet('-');
-#endif
+            // DOS AHSR — only relevant on DJGPP; no-op on POSIX.
             break;
-        case '1':
-        {
+
+        case '1': {
 #ifndef DJGPP
 # ifdef S_ISLNK
-                 if(S_ISLNK(Stat.st_mode))  PutSet('l');
+            if (S_ISLNK(st.st_mode)) put_set('l');
             else
 # endif
-                 if(S_ISDIR(Stat.st_mode))  PutSet('d');
-            else if(S_ISCHR(Stat.st_mode))  PutSet('c');
-            else if(S_ISBLK(Stat.st_mode))  PutSet('b');
+            if (S_ISDIR(st.st_mode)) put_set('d');
+            else if (S_ISCHR(st.st_mode)) put_set('c');
+            else if (S_ISBLK(st.st_mode)) put_set('b');
 # ifdef S_ISFIFO
-            else if(S_ISFIFO(Stat.st_mode)) PutSet('p');
+            else if (S_ISFIFO(st.st_mode)) put_set('p');
 # endif
 # ifdef S_ISSOCK
-            else if(S_ISSOCK(Stat.st_mode)) PutSet('s');
+            else if (S_ISSOCK(st.st_mode)) put_set('s');
 # endif
 # ifdef S_ISDOOR
-            else if(S_ISDOOR(Stat.st_mode)) PutSet('D');
+            else if (S_ISDOOR(st.st_mode)) put_set('D');
 # endif
-            else if(S_ISREG(Stat.st_mode))  PutSet('-');
-            else
-            {
-                // not dir, not link, not chr, not blk, not fifo, not sock, not file...
-                // not even a door (?)... what is it then???
-                PutSet('?');
-            }
+            else if (S_ISREG(st.st_mode)) put_set('-');
+            else put_set('?');
 
-            auto mode = [&Stat](unsigned m) -> bool { return Stat.st_mode & m; };
+            // Modern: constexpr pattern table, lambda capturing stat.
+#if defined(SUNOS) || defined(__sun) || defined(SOLARIS)
+            constexpr std::array<char,16> patterns{
+                '-','r','-','w', '-','x','S','s',
+                '-','x','l','s', '-','x','T','t'
+            };
+#else
+            constexpr std::array<char,16> patterns{
+                '-','r','-','w', '-','x','S','s',
+                '-','x','S','s', '-','x','T','t'
+            };
+#endif
+            auto has = [&st](unsigned m) -> bool { return st.st_mode & m; };
 
-        #if defined(SUNOS)||defined(__sun)||defined(SOLARIS)
-            static const char patterns[16] = {'-','r','-','w', '-','x','S','s', '-','x','l','s', '-','x','T','t'};
-        #else
-            static const char patterns[16] = {'-','r','-','w', '-','x','S','s', '-','x','S','s', '-','x','T','t'};
-        #endif
+            const int def_col = GetModeColor(ColorMode::MODE, -('-'));
+            const int exe_col = GetModeColor(ColorMode::MODE, -(has(S_IXUSR) ? 'x' : '-'));
 
-            int defcolor = GetModeColor(ColorMode::MODE, -('-'));
-            int xcolor   = GetModeColor(ColorMode::MODE, -(mode(S_IXUSR)?'x':'-'));
-            SetAttr(defcolor);
-            Gputch(patterns[0+mode(S_IRUSR)]);
-            Gputch(patterns[2+mode(S_IWUSR)]);
-
-            SetAttr(xcolor);
-            Gputch(patterns[4+mode(S_ISUID)*2+mode(S_IXUSR)]);
-
-            SetAttr(defcolor);
-            Gputch(patterns[0+mode(S_IRGRP)]);
-            Gputch(patterns[2+mode(S_IWGRP)]);
-
-            SetAttr(xcolor);
-            Gputch(patterns[8+mode(S_ISGID)*2+mode(S_IXGRP)]);
-
-            SetAttr(defcolor);
-            Gputch(patterns[0+mode(S_IROTH)]);
-            Gputch(patterns[2+mode(S_IWOTH)]);
-
-            SetAttr(xcolor);
-            Gputch(patterns[12+mode(S_ISVTX)*2+mode(S_IXOTH)]);
-
-            Len += 9;
-
-#endif /* not djgpp */
+            SetAttr(def_col);
+            Gputch(patterns[0 + has(S_IRUSR)]);
+            Gputch(patterns[2 + has(S_IWUSR)]);
+            SetAttr(exe_col);
+            Gputch(patterns[4 + has(S_ISUID)*2 + has(S_IXUSR)]);
+            SetAttr(def_col);
+            Gputch(patterns[0 + has(S_IRGRP)]);
+            Gputch(patterns[2 + has(S_IWGRP)]);
+            SetAttr(exe_col);
+            Gputch(patterns[8 + has(S_ISGID)*2 + has(S_IXGRP)]);
+            SetAttr(def_col);
+            Gputch(patterns[0 + has(S_IROTH)]);
+            Gputch(patterns[2 + has(S_IWOTH)]);
+            SetAttr(exe_col);
+            Gputch(patterns[12 + has(S_ISVTX)*2 + has(S_IXOTH)]);
+            len += 9;
+#endif
             break;
-
         }
-        default: // anything else ('2'..'9')
-        {
+        default: { // '2'..'9' → octal tail
             GetModeColor(ColorMode::MODE, '#');
-            std::string s = Printf("%032o", Stat.st_mode);
-            Len += Gwrite(s.substr(s.size()- (Attrs-'0')));
+            std::string s = Printf("%032o", st.st_mode);
+            const std::size_t keep = static_cast<std::size_t>(attrs - '0');
+            std::string_view tail = std::string_view(s).substr(s.size() - keep);
+            len += static_cast<int>(Gwrite(tail));
+            break;
         }
     }
-    #undef PutSet
-    return Len;
+    return len;
 }
+
+#ifdef DJGPP
+int PrintAttr(const StatType& st, char attrs, unsigned dosattr) {
+    if (attrs == '0') {
+        int len = 0;
+        auto put_set = [&](char c) { GetModeColor(ColorMode::MODE, c); Gputch(c); ++len; };
+        if (dosattr & 0x20) put_set('A'); else put_set('-');
+        if (dosattr & 0x02) put_set('H'); else put_set('-');
+        if (dosattr & 0x04) put_set('S'); else put_set('-');
+        if (dosattr & 0x01) put_set('R'); else put_set('-');
+        return len;
+    }
+    return PrintAttr(st, attrs);
+}
+#endif

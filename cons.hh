@@ -3,7 +3,7 @@
 
 #include <algorithm> // std::swap
 #include "printf.hh"
-#include "config.h"
+#include <config.h>
 
 extern bool Colors;
 extern bool AnsiOpt;
