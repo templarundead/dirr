@@ -1,8 +1,4 @@
-#include <unistd.h>
-#include <cstring>
-#include <cstdint>
-
-#include "config.h"
+#include <config.h>
 #include "getname.hh"
 #include "strfun.hh"
 #include "setfun.hh"
@@ -22,6 +18,10 @@ int GetName(std::string fn /* modified, so operate on a copy */,
             const char *hardlinkfn)
 {
     const StatType *Stat = &sta;
+    // The formatter re-enters Redo with these records. Keep them alive for the
+    // full call instead of pointing at temporaries inside the link branches.
+    StatType LinkStat{};
+    StatType HardlinkStat{};
 
     unsigned Len = 0;
     bool estimating = (Space == 0);
@@ -82,35 +82,31 @@ Redo:
             if(Space > 0) GetModeColor(ColorMode::INFO, '@');
             PrintIfRoom(SLinkArrow);
 
-            StatType Stat1;
             std::string Buf = LinkTarget(fn, true);
 
-            /* Analyze the link target. */
-            if(StatFunc(Buf.c_str(), &Stat1) < 0)
-            {
-                if(LStatFunc(Buf.c_str(), &Stat1) < 0)
-                {
+            // Probe the followed target first, then fall back to its link metadata.
+            if (auto target = try_stat(Buf); !target) {
+                if (auto link = try_lstat(Buf); !link) {
                     wasinvalid = true;
-                    if(Space > 0) GetModeColor(ColorMode::TYPE, '?');
-                }
-                else
-                {
-                    if(Space > 0) GetModeColor(ColorMode::TYPE, 'l');
+                    if (Space > 0) GetModeColor(ColorMode::TYPE, '?');
+                } else {
+                    LinkStat = *link;
+                    if (Space > 0) GetModeColor(ColorMode::TYPE, 'l');
                 }
                 maysublink = false;
-            }
-            else if(Space > 0)
-            {
-                StatType Stat2;
-                if(LStatFunc(Buf.c_str(), &Stat2) >= 0 && S_ISLNK(Stat2.st_mode))
-                   GetModeColor(ColorMode::TYPE, 'l');
-                else
-                   SetAttr(GetNameAttr(Stat1, Buf));
+            } else {
+                LinkStat = *target;
+                if (Space > 0) {
+                    if (auto link = try_lstat(Buf); link && S_ISLNK(link->st_mode))
+                        GetModeColor(ColorMode::TYPE, 'l');
+                    else
+                        SetAttr(GetNameAttr(LinkStat, Buf));
+                }
             }
 
             fn       = LinkTarget(fn, false); // Unfixed link.
             fn_print = fn;
-            Stat = &Stat1;
+            Stat = &LinkStat;
             goto Redo;
         }
         PutSet('@');
@@ -124,17 +120,16 @@ Redo:
 
     if(hardlinkfn && Space)
     {
-        StatType Stat1;
-
         GetModeColor(ColorMode::INFO, '&');
         PrintIfRoom(HLinkArrow);
 
         fn_print = Relativize(fn, hardlinkfn);
 
-        StatFunc(hardlinkfn, &Stat1);
-        SetAttr(GetNameAttr(Stat1, NameOnly(hardlinkfn)));
+        if (auto hardlink_stat = try_stat(hardlinkfn); hardlink_stat)
+            HardlinkStat = *hardlink_stat;
+        SetAttr(GetNameAttr(HardlinkStat, NameOnly(hardlinkfn)));
         hardlinkfn = NULL;
-        Stat = &Stat1;
+        Stat = &HardlinkStat;
 
         maysublink = false;
         wasinvalid = false;

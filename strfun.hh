@@ -1,58 +1,45 @@
-#ifndef dirr3_strfun_hh
-#define dirr3_strfun_hh
+#pragma once
 
+#include <filesystem>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <limits.h>
 
 #include "printf.hh"
 
-extern std::string_view NameOnly(std::string_view Name);
+#ifndef NAME_MAX
+# define NAME_MAX 255
+#endif
+#ifndef PATH_MAX
+# define PATH_MAX 1023
+#endif
 
-// Ends with '/'.
-// If no directory, returns empty std::string.
-extern std::string_view DirOnly(std::string_view Name);
+std::string_view NameOnly(std::string_view path) noexcept;
+std::string_view DirOnly(std::string_view path) noexcept;
+std::string LinkTarget(const std::string& link, bool fixit = false);
+std::string GetError(int err);
+std::string Relativize(std::string_view base, std::string_view name);
+inline std::string RelativizePath(const std::filesystem::path& base,
+                                  const std::filesystem::path& target) {
+    return Relativize(base.string(), target.string());
+}
 
-// Without fixit, simply returns the link target text.
-// With fixit, it makes the link absolute, if it was relative.
-// Parameter is not a string_view,
-// because it cals a POSIX function that requires nul terminator.
-extern std::string LinkTarget(const std::string& link, bool fixit=false);
-
+/// Formatted number with optional thousands separator.
 template<typename... Args>
-void PrintNum(std::string &Dest, char Seps, std::string_view fmt, Args&&... args)
-{
-    Dest = Printf(fmt, std::forward<Args>(args)...);
-    if(Seps)
-    {
-        std::size_t Len = Dest.find('.');
-        if(Len == Dest.npos) Len = Dest.size();
-
-        /* 7:2, 6:1, 5:1, 4:1, 3:0, 2:0, 1:0, 0:0 */
-        for(unsigned SepCount = (Len - 1) / 3; SepCount>0; SepCount--)
-        {
-            Len -= 3;
-            Dest.insert(Len, 1, Seps);
+void PrintNum(std::string& dest, char seps, std::string_view fmt, Args&&... args) {
+    dest = Printf(fmt, std::forward<Args>(args)...);
+    if (seps != '\0') {
+        std::size_t dot = dest.find('.');
+        if (dot == std::string::npos) dot = dest.size();
+        for (std::size_t groups = (dot == 0 ? 0 : (dot - 1) / 3); groups > 0; --groups) {
+            dot -= 3;
+            dest.insert(dot, 1, seps);
         }
     }
 }
 
 template<std::size_t N, typename... Args>
-inline void PrintNum(std::string &Dest, char Seps, const char (&fmt)[N], Args&&... args)
-{
-    PrintNum(Dest, Seps, std::string_view(fmt, N-1), std::forward<Args>(args)...);
+inline void PrintNum(std::string& dest, char seps, const char (&fmt)[N], Args&&... args) {
+    PrintNum(dest, seps, std::string_view(fmt, N - 1), std::forward<Args>(args)...);
 }
-
-#ifndef NAME_MAX
- #define NAME_MAX 255  /* Chars in a file name */
-#endif
-#ifndef PATH_MAX
- #define PATH_MAX 1023 /* Chars in a path name */
-#endif
-
-/* Does merely strerror() */
-extern std::string GetError(int e);
-
-// base="/usr/bin/diu", name="/usr/doc/dau", return="../doc/dau"
-extern std::string Relativize(std::string_view base, std::string_view name);
-
-#endif

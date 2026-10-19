@@ -1,0 +1,56 @@
+name: Build and test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: GCC / ${{ matrix.configuration }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - configuration: Release
+            build_type: Release
+            cmake_options: -DDIRR_ENABLE_LTO=ON
+          - configuration: AddressSanitizer + UBSan
+            build_type: Debug
+            cmake_options: -DDIRR_ENABLE_LTO=OFF -DDIRR_ENABLE_SANITIZER=ON
+    env:
+      CXX: g++
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Show compiler version
+        run: $CXX --version
+
+      - name: Configure CMake
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          ${{ matrix.cmake_options }}
+
+      - name: Build
+        run: |
+          if cmake --build build --parallel 2 > build.log 2>&1; then
+            tail -n 20 build.log
+          else
+            tail -n 60 build.log
+            exit 1
+          fi
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure

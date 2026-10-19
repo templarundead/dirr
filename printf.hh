@@ -7,7 +7,8 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include "config.h"
+#include <utility>
+#include <config.h>
 
 namespace PrintfPrivate
 {
@@ -237,10 +238,10 @@ private:
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Weffc++"
 template<typename T>
-inline PrintfProxy& operator % (PrintfProxy&& lhs,  T&& arg)
+inline PrintfProxy&& operator % (PrintfProxy&& lhs,  T&& arg)
 {
     lhs %= std::forward<T>(arg);
-    return lhs; // Note: Converts rvalue reference into lvalue reference
+    return std::move(lhs);
 }
 template<typename T>
 inline PrintfProxy& operator % (PrintfProxy& lhs,  T&& arg)

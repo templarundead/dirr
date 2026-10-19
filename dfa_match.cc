@@ -19,7 +19,7 @@
 #endif
 
 #include "dfa_match.hh"
-#include "config.h"
+#include <config.h>
 
 #ifndef DFA_DISABLE_MUTEX
 # include <mutex>

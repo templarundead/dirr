@@ -1,7 +1,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "config.h"
+#include <config.h>
 #include "colouring.hh"
 #include "setfun.hh"
 #include "strfun.hh"
@@ -18,7 +18,7 @@
  #define MINOR(dev) ((dev) & 255)
 #endif
 
-string BlkStr, ChrStr;
+std::string BlkStr, ChrStr;
 
 static bool LinkFormatWithoutSize()
 {
@@ -29,9 +29,12 @@ static bool LinkFormatStatsOfTarget()
     return Links==3 || Links==5;
 }
 
-string GetSize(const string &s, const StatType &Sta, int Space, int Seps)
+std::string GetSize(const std::string &s, const StatType &Sta, int Space, int Seps)
 {
     const StatType *Stat = &Sta;
+#ifdef S_ISLNK
+    StatType target_stat{}; // Must outlive the GotSize retry path below.
+#endif
 
     std::string result;
     ColorDescr descr = ColorDescr::DESCR;
@@ -76,13 +79,10 @@ P1:
         {
             if(LinkFormatStatsOfTarget())
             {
-                static StatType Stat1;
-                string Buf = LinkTarget(s);
-
-                // Target status
-                if(StatFunc(Buf.c_str(), &Stat1) >= 0)
-                {
-                    Stat = &Stat1;
+                const std::string target_path = LinkTarget(s, true);
+                if (auto target = try_stat(target_path); target) {
+                    target_stat = *target;
+                    Stat = &target_stat;
                     goto GotSize;
                 }
                 goto LinkProblem;
@@ -107,7 +107,7 @@ P1:
             }
         }
 
-        PrintNum(result, Seps == -1 ? '\0' : Seps, SizeFormat, SizeCast l);
+        PrintNum(result, Seps == -1 ? '\0' : Seps, SizeFormat, l);
         result += Suffix;
 
         if(descr != ColorDescr(-1)) descr = ColorDescr::SIZE;

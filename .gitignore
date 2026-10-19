@@ -1,0 +1,17 @@
+# CMake / build output
+/build/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/Testing/
+/dirr
+/*.o
+/.depend
+/.depend.*
+/configure.log
+/conftest*
+
+# Editor / backup files
+*~
+*.swp
+*.swo

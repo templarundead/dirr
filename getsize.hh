@@ -1,10 +1,15 @@
-#ifndef dirr3_getsize_hh
-#define dirr3_getsize_hh
+#pragma once
 
 #include <string>
 
-extern string BlkStr, ChrStr;
+#include "stat.h"
 
-extern string GetSize(const string &s, const StatType &Sta, int Space, int Seps);
+extern std::string BlkStr, ChrStr;
 
-#endif
+/// Human / numeric size formatting.
+/// @param space  max columns (0 = estimate — no output)
+/// @param seps   thousands separator (0 = none, -1 = compact SI)
+std::string GetSize(const std::string& path,
+                      const StatType& st,
+                      int space,
+                      int seps);

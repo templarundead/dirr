@@ -13,7 +13,7 @@
 //#include "wildmatch.hh"
 #include "dfa_match.hh"
 
-#include "config.h"
+#include <config.h>
 #include "setfun.hh"
 #include "cons.hh"
 

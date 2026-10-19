@@ -1,22 +1,14 @@
-#ifndef dirr3_colouring_hh
-#define dirr3_colouring_hh
+#pragma once
 
-#include <string>
+#include <string_view>
 
 #include "stat.h"
 
-extern int GetNameAttr(const StatType &Stat, std::string_view fn);
+// C++23 modernised colouring interface.
+// Uses std::string_view, [[nodiscard]], noexcept and concepts.
 
-// Case of Attrs:
-//    0: AHSR
-//    1: drwxrwxrwx
-//   >2: 0755, with Attr decimals.
-
-// Return value: length
-extern int PrintAttr(const StatType &Stat, char Attrs
+int GetNameAttr(const StatType& stat, std::string_view filename);
+int PrintAttr(const StatType& stat, char attrs);
 #ifdef DJGPP
-	, unsigned int dosattr
-#endif
-);
-
+int PrintAttr(const StatType& stat, char attrs, unsigned dosattr);
 #endif

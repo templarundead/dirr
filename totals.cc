@@ -1,6 +1,6 @@
 #include <cstring>
 
-#include "config.h"
+#include <config.h>
 
 #ifdef HAVE_STATFS_SYS_VFS_H
 # include <sys/vfs.h>
@@ -18,10 +18,10 @@
 #include "strfun.hh"
 #include "totals.hh"
 
-SizeType SumCnt[10] = {0};
-SizeType SumSizes[10]  = {0};
+std::array<SizeType, SumMax> SumCnt{};
+std::array<SizeType, SumMax> SumSizes{};
 
-string LastDir;
+std::string LastDir;
 
 bool Totals;
 int TotalSep;
@@ -43,7 +43,7 @@ void PrintSums()
 #endif
     SizeType Koko;
 
-    string NumBuf;
+    std::string NumBuf;
 
     Dumping = true;
     GetDescrColor(ColorDescr::TEXT, 1);
@@ -73,7 +73,7 @@ void PrintSums()
         SizeType Tmp = SumCnt[SumChrDev] + SumCnt[SumBlkDev];
         SizeType Tmp2= SumCnt[SumFifo]+SumCnt[SumSock]+SumCnt[SumLink];
 
-        PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast SumCnt[SumDir]);
+        PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumDir]);
         Gprintf(" \1%s\1 dir%s%s", NumBuf,
 #ifdef HAVE_STATFS
             (tmp.f_bavail > 0 && Tmp)?"":
@@ -87,7 +87,7 @@ void PrintSums()
 
         if(SumCnt[SumFile])
         {
-            PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast SumCnt[SumFile]);
+            PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumFile]);
             Gprintf(", \1%s\1 file%s",
                 NumBuf,
                 SumCnt[SumFile]==1?"":"s");
@@ -95,16 +95,16 @@ void PrintSums()
 
         if(Tmp)
         {
-            PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast Tmp);
+            PrintNum(NumBuf, TotalSep, SizeFormat, Tmp);
             Gprintf(", \1%s\1 device%s", NumBuf, Tmp==1?"":"s");
         }
         if(Tmp2)
         {
-            PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast Tmp2);
+            PrintNum(NumBuf, TotalSep, SizeFormat, Tmp2);
             Gprintf(", \1%s\1 other%s", NumBuf, Tmp2==1?"":"s");
         }
 
-        PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast Koko);
+        PrintNum(NumBuf, TotalSep, SizeFormat, Koko);
         Gprintf(", \1%s\1 bytes", NumBuf);
 
 #ifdef HAVE_STATFS
@@ -146,19 +146,19 @@ void PrintSums()
 
         if(Tmp)
         {
-            PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast Tmp);
+            PrintNum(NumBuf, TotalSep, SizeFormat, Tmp);
             Gprintf("\1%5s\1 device%s (", NumBuf, (Tmp==1)?"":"s");
 
             if(SumCnt[SumChrDev])
             {
-                PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast SumCnt[SumChrDev]);
+                PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumChrDev]);
                 Gprintf("\1%s\1 char", NumBuf);
             }
             if(SumCnt[SumChrDev]
             && SumCnt[SumBlkDev])Gprintf(", ");
             if(SumCnt[SumBlkDev])
             {
-                PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast SumCnt[SumBlkDev]);
+                PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumBlkDev]);
                 Gprintf("\1%s\1 block", NumBuf);
             }
             Gprintf(")\n");
@@ -166,38 +166,38 @@ void PrintSums()
 
         if(SumCnt[SumDir])
         {
-            string TmpBuf;
-            PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast SumCnt[SumDir]);
-            PrintNum(TmpBuf, TotalSep, SizeFormat, SizeCast SumSizes[SumDir]);
+            std::string TmpBuf;
+            PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumDir]);
+            PrintNum(TmpBuf, TotalSep, SizeFormat, SumSizes[SumDir]);
             Gprintf("\1%5s\1 directories,\1%11s\1 bytes\n",
                 NumBuf, TmpBuf);
         }
 
         if(SumCnt[SumFifo])
         {
-            string TmpBuf;
-            PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast SumCnt[SumFifo]);
-            PrintNum(TmpBuf, TotalSep, SizeFormat, SizeCast SumSizes[SumFifo]);
+            std::string TmpBuf;
+            PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumFifo]);
+            PrintNum(TmpBuf, TotalSep, SizeFormat, SumSizes[SumFifo]);
             Gprintf("\1%5s\1 fifo%s\1%17s\1 bytes\n",
                 NumBuf, (SumCnt[SumFifo]==1)?", ":"s,", TmpBuf);
         }
         if(SumCnt[SumFile])
         {
-            string TmpBuf;
-            PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast SumCnt[SumFile]);
-            PrintNum(TmpBuf, TotalSep, SizeFormat, SizeCast SumSizes[SumFile]);
+            std::string TmpBuf;
+            PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumFile]);
+            PrintNum(TmpBuf, TotalSep, SizeFormat, SumSizes[SumFile]);
             Gprintf("\1%5s\1 file%s\1%17s\1 bytes\n",
                 NumBuf, (SumCnt[SumFile]==1)?", ":"s,", TmpBuf);
         }
         if(SumCnt[SumLink])
         {
-            string TmpBuf;
-            PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast SumCnt[SumLink]);
-            PrintNum(TmpBuf, TotalSep, SizeFormat, SizeCast SumSizes[SumLink]);
+            std::string TmpBuf;
+            PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumLink]);
+            PrintNum(TmpBuf, TotalSep, SizeFormat, SumSizes[SumLink]);
             Gprintf("\1%5s\1 link%s\1%17s\1 bytes\n",
                 NumBuf, (SumCnt[SumLink]==1)?", ":"s,", TmpBuf);
         }
-        PrintNum(NumBuf, TotalSep, SizeFormat, SizeCast Koko);
+        PrintNum(NumBuf, TotalSep, SizeFormat, Koko);
         Gprintf("Total\1%24s\1 bytes\n", NumBuf);
 #ifdef HAVE_STATFS
         if(tmp.f_bavail > 0)
@@ -220,6 +220,6 @@ void PrintSums()
 
     ColorNums = -1;
 
-    for(auto& i: SumCnt) i=0;
-    for(auto& i: SumSizes) i=0;
+    SumCnt.fill(0);
+    SumSizes.fill(0);
 }
