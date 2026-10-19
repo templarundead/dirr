@@ -93,6 +93,8 @@ jobs:
           if cmake --build build --parallel 2 > build.log 2>&1; then
             tail -n 20 build.log
           else
+            details=$(tail -n 80 build.log | tr '\n' ' ' | sed 's/%/%25/g')
+            echo "::error title=GCC build diagnostics::$details"
             tail -n 80 build.log
             exit 1
           fi
