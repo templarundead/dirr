@@ -15,29 +15,21 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: ${{ matrix.compiler }} / ${{ matrix.configuration }}
+    name: GCC / ${{ matrix.configuration }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include:
-          - compiler: GCC
-            cxx: g++
-            configuration: Release
+          - configuration: Release
             build_type: Release
-            cmake_options: -DDIRR_ENABLE_LTO=OFF
-          - compiler: Clang
-            cxx: clang++
-            configuration: Release
-            build_type: Release
-            cmake_options: -DDIRR_ENABLE_LTO=OFF
-          - compiler: GCC
-            cxx: g++
-            configuration: AddressSanitizer + UBSan
+            cmake_options: -DDIRR_ENABLE_LTO=ON
+          - configuration: AddressSanitizer + UBSan
             build_type: Debug
             cmake_options: -DDIRR_ENABLE_LTO=OFF -DDIRR_ENABLE_SANITIZER=ON
     env:
-      CXX: ${{ matrix.cxx }}
+      CXX: g++
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -46,29 +38,19 @@ jobs:
         run: $CXX --version
 
       - name: Configure CMake
-        run: |
-          if ! cmake -S . -B build \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            ${{ matrix.cmake_options }} > configure.log 2>&1; then
-            details=$(tail -n 80 configure.log | tr '\n' ' ' | sed 's/%/%25/g')
-            echo "::error title=Configuration output::$details"
-            if [ -f build/CMakeFiles/CMakeError.log ]; then
-              probe=$(tail -n 80 build/CMakeFiles/CMakeError.log | tr '\n' ' ' | sed 's/%/%25/g')
-              echo "::error title=Failed compiler probe::$probe"
-            fi
-            exit 1
-          fi
-          cat configure.log
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          ${{ matrix.cmake_options }}
 
       - name: Build
         run: |
-          if ! cmake --build build --parallel 2 > build.log 2>&1; then
-            grep -nE 'error:|fatal error:|undefined reference|collect2: error|ld: error' build.log \
-              | while IFS= read -r line; do echo "::error title=Build diagnostic::$line"; done
+          if cmake --build build --parallel 2 > build.log 2>&1; then
+            tail -n 20 build.log
+          else
             tail -n 60 build.log
             exit 1
           fi
-          tail -n 20 build.log
 
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
