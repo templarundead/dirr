@@ -40,19 +40,30 @@ jobs:
       CXX: ${{ matrix.cxx }}
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Show compiler version
         run: $CXX --version
 
       - name: Configure CMake
-        run: >-
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          ${{ matrix.cmake_options }}
+        run: |
+          if ! cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            ${{ matrix.cmake_options }} > configure.log 2>&1; then
+            cat configure.log
+            exit 1
+          fi
+          cat configure.log
 
       - name: Build
-        run: cmake --build build --parallel 2
+        run: |
+          if ! cmake --build build --parallel 2 > build.log 2>&1; then
+            grep -nE 'error:|fatal error:|undefined reference|collect2: error|ld: error' build.log \
+              | while IFS= read -r line; do echo "::error title=Build diagnostic::$line"; done
+            tail -n 60 build.log
+            exit 1
+          fi
+          tail -n 20 build.log
 
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
