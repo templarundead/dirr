@@ -2,6 +2,7 @@
 #define dirr3_cons_hh
 
 #include <algorithm> // std::swap
+#include <utility>
 #include "printf.hh"
 #include <config.h>
 
@@ -59,10 +60,10 @@ public:
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Weffc++"
 template<typename T>
-inline GprintfProxy& operator % (GprintfProxy&& lhs, T&& arg)
+inline GprintfProxy&& operator % (GprintfProxy&& lhs, T&& arg)
 {
     lhs %= std::forward<T>(arg);
-    return lhs; // Note: Converts rvalue reference into lvalue reference
+    return std::move(lhs);
 }
 template<typename T>
 inline GprintfProxy& operator % (GprintfProxy& lhs,  T&& arg)

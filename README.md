@@ -36,6 +36,10 @@ make -j
 
 The legacy configure script now requires C++23 as well. CMake is preferred because it keeps generated files in the build directory and provides the smoke-test suite.
 
+## Continuous integration
+
+GitHub Actions runs the standard Release and sanitizer tests, plus a Debian 14 (Forky) `aarch64` compiler matrix using GCC 14.x, 15.x, and 16.x. Each compiler variant builds the project and runs CTest.
+
 ## Prebuilt Linux binaries
 
 Pushing a version tag matching the CMake project version (for example, `v3.39.1`) creates a GitHub Release with tested Linux binaries for `x86_64` and `aarch64`, in both dynamically linked and static variants. Each `.tar.gz` contains the executable and `COPYING`; the release also includes a `SHA256SUMS` file. Dynamic builds are produced on Ubuntu 24.04 and may require a similarly recent glibc. Static builds are linked with `-static`; glibc can still consult system NSS modules for user/group-name lookups.
