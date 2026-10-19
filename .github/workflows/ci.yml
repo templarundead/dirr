@@ -50,8 +50,8 @@ jobs:
           if ! cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             ${{ matrix.cmake_options }} > configure.log 2>&1; then
-            tail -n 30 configure.log \
-              | while IFS= read -r line; do echo "::error title=Configuration output::$line"; done
+            details=$(tail -n 80 configure.log | tr '\n' ' ' | sed 's/%/%25/g')
+            echo "::error title=Configuration output::$details"
             exit 1
           fi
           cat configure.log
