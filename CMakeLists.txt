@@ -128,9 +128,17 @@ check_cxx_source_compiles("
 if(NOT HAVE_EXPECTED)
     message(FATAL_ERROR "dirr requires a C++23 standard library with std::expected")
 endif()
-# Optional newer library facilities; not required by current custom formatter.
+# Optional newer library facilities; use std::print when the complete API exists.
 check_include_file_cxx("format" HAVE_FORMAT)
-check_include_file_cxx("print" HAVE_PRINT)
+check_cxx_source_compiles("
+    #include <cstdio>
+    #include <print>
+    #include <string_view>
+    int main() {
+        std::print(stdout, \"{}\", std::string_view{\"probe\"});
+    }
+" HAVE_STD_PRINT)
+set(HAVE_PRINT ${HAVE_STD_PRINT})
 check_include_file_cxx("filesystem" HAVE_FILESYSTEM)
 if(NOT HAVE_FILESYSTEM)
     message(FATAL_ERROR "dirr requires <filesystem>")

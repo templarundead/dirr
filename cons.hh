@@ -114,7 +114,7 @@ inline std::uint_fast64_t ParseUTF8(F&& getchar) // Return value: 32-bits char, 
         /*fprintf(stderr, "utf8 seq len=%u c=%02X cache=%04X bytesleft=%u\n", length,c,cache,bytesleft);*/
         if(!bytesleft)
         {
-            char32_t c = cache, mincode = 0;
+            char32_t codepoint = cache, mincode = 0;
             switch(length)
             {
                 default:
@@ -123,8 +123,8 @@ inline std::uint_fast64_t ParseUTF8(F&& getchar) // Return value: 32-bits char, 
                 case 3: mincode = 0x800; break;
                 case 4: mincode = 0x10000; break;
             }
-            if(c < mincode) break; // Invalid sequence
-            return c | (((std::uint_fast64_t)length) << 32);
+            if(codepoint < mincode) break; // Invalid sequence
+            return codepoint | (((std::uint_fast64_t)length) << 32);
         }
     }
     return 0; // Invalid sequence
@@ -153,7 +153,7 @@ std::size_t WidthPrintHelper(std::size_t maxlen, std::string_view buf, bool fill
         {
             // Parse the UTF8 byte sequence
             char32_t seq = utf8 & 0xFFFFFFFFu;
-            unsigned length = utf8 >> 32;
+            unsigned length = static_cast<unsigned>(utf8 >> 32);
 
             if(seq >= 0xD800 && seq <= 0xDFFF)
             {
@@ -167,7 +167,7 @@ std::size_t WidthPrintHelper(std::size_t maxlen, std::string_view buf, bool fill
                 char32_t seq2 = another & 0xFFFFFFFu;
                 if(seq2 >= 0xDC00 && seq2 <= 0xDFFF)
                 {
-                    length += another >> 32;
+                    length += static_cast<unsigned>(another >> 32);
                     // Recompose from the surrogate
                     seq = ((seq - 0xD800u)*0x400u) + (seq2 - 0xDC00u) + 0x10000u;
                 }

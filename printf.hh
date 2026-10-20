@@ -102,9 +102,9 @@ public:
 
     /* This overload is for string constants, which are converted into string_views. */
     template<typename CT, std::size_t N, typename... T2>
-    void Execute(State& state, const CT (&arg)[N], T2&&... rest)
+    void Execute(State& state, const CT (&text)[N], T2&&... rest)
     {
-        ExecutePart<std::basic_string_view<CT>>(state, std::basic_string_view<CT>(arg,N-1));
+        ExecutePart<std::basic_string_view<CT>>(state, std::basic_string_view<CT>(text,N-1));
         Execute(state, std::forward<T2>(rest)...);
     }
 

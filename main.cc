@@ -29,6 +29,7 @@ static const char VERSIONSTR[] =
 #include "argh.hh"
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -52,7 +53,7 @@ static const char VERSIONSTR[] =
 
 #include "stat.h"
 
-static int RowLen;
+static std::size_t RowLen;
 
 struct Estimation
 {
@@ -151,8 +152,8 @@ struct FieldsToPrint: public std::vector<FieldInfo> // ParsedFieldOrder
                         case 'x':
                             #define x(c) (((c)>='0'&&(c)<='9') ? ((c)-'0') : ((c)>='A'&&(c)<='F') ? ((c)-'A'+10) : ((c)-'a'+10))
                             work=0;
-                            if(std::isxdigit(s[a+1])) { ++a; work = work*16 + x(s[a]);
-                            if(std::isxdigit(s[a+1])) { ++a; work = work*16 + x(s[a]); }}
+                            if(std::isxdigit(s[a+1])) { ++a; work = static_cast<unsigned char>(work*16 + x(s[a]));
+                            if(std::isxdigit(s[a+1])) { ++a; work = static_cast<unsigned char>(work*16 + x(s[a])); }}
                             else work = DEFAULTATTR;
                             emplace_back(FieldInfo{FieldInfo::color, work});
                             break;
@@ -313,7 +314,7 @@ static void TellMe(const StatType &Stat, std::string&& Name
             }
             case FieldInfo::attribute:
             {
-                ItemLen += PrintAttr(Stat, f.info
+                ItemLen += PrintAttr(Stat, static_cast<char>(f.info)
                 #ifdef DJGPP
                                     , dosattr
                 #endif
@@ -375,8 +376,11 @@ static void TellMe(const StatType &Stat, std::string&& Name
                 // Undocumented feature: If fitting is disabled, long pathful filenames are printed
                 bool nameonly = f.info;
                 if(!nameonly && Name.rfind('/')==1 && Name.substr(0,2)=="./") nameonly = true;
-                auto i = GetName(Name, Stat, Limits.Name, MultiColumn || f.info, nameonly, hardlinkfn);
-                ItemLen += std::max(std::size_t(i), Limits.Name);
+                const auto max_name_space = static_cast<std::size_t>(std::numeric_limits<int>::max());
+                const int name_space = static_cast<int>(std::min(Limits.Name, max_name_space));
+                const auto name_width = GetName(Name, Stat, name_space,
+                                                MultiColumn || f.info, nameonly, hardlinkfn);
+                ItemLen += std::max(name_width, Limits.Name);
                 break;
             }
             case FieldInfo::size:
@@ -458,7 +462,8 @@ static void TellMe(const StatType &Stat, std::string&& Name
         //fprintf(stderr, "ItemLen=%zu, RowLen becomes %zu\n", ItemLen, RowLen+ItemLen);
         RowLen += ItemLen;
         // Make a newline if the _next_ item of the same width would not fit
-        if(!MultiColumn || int(RowLen + ItemLen) >= int(COLS))
+        const std::size_t screen_width = COLS > 0 ? static_cast<std::size_t>(COLS) : 0;
+        if(!MultiColumn || RowLen + ItemLen >= screen_width)
         {
             Gputch('\n');
             RowLen = 0;
@@ -583,49 +588,49 @@ static std::vector<StatItem> CollectedFilesForCurrentDirectory;
 
 static std::size_t CalculateRowWidth(const Estimation& estimation, bool file_too)
 {
-    std::size_t RowLen = 0;
+    std::size_t row_width = 0;
     for(const auto& f: FieldsToPrint)
         switch(f.type)
         {
-            case FieldInfo::literal: ++RowLen; break;
+            case FieldInfo::literal: ++row_width; break;
             case FieldInfo::color: break;
             case FieldInfo::attribute:
-                if(f.info == '1') RowLen += 10;
+                if(f.info == '1') row_width += 10;
                 #ifdef DJGPP
-                else if(f.info == '0') RowLen += 4;
+                else if(f.info == '0') row_width += 4;
                 #endif
-                else RowLen += f.info - '0';
+                else row_width += f.info - '0';
                 break;
-            case FieldInfo::nrlinks: RowLen += estimation.Links; break;
+            case FieldInfo::nrlinks: row_width += estimation.Links; break;
             case FieldInfo::name:
-                if(file_too) RowLen += estimation.Name;
+                if(file_too) row_width += estimation.Name;
                 break; // Not estimating
-            case FieldInfo::size: RowLen += estimation.Size; break;
-            case FieldInfo::size_compact: RowLen += estimation.SizeCompact; break;
-            case FieldInfo::size_sep: RowLen += estimation.SizeWithSeps; break;
+            case FieldInfo::size: row_width += estimation.Size; break;
+            case FieldInfo::size_compact: row_width += estimation.SizeCompact; break;
+            case FieldInfo::size_sep: row_width += estimation.SizeWithSeps; break;
             case FieldInfo::datetime:
             {
                 if(DateForm == "%u")
-                    RowLen += 12;
+                    row_width += 12;
                 else if(DateForm == "%z")
-                    RowLen += 5;
+                    row_width += 5;
                 else
                 {
                     char Buf[64];
                     struct tm TM{};
                     strftime(Buf, sizeof Buf, DateForm.c_str(), &TM);
-                    RowLen += strlen(Buf);
+                    row_width += strlen(Buf);
                 }
                 break;
             }
-            case FieldInfo::user_id:    RowLen += estimation.UIDnumber; break;
-            case FieldInfo::user_name:  RowLen += estimation.UIDname; break;
-            case FieldInfo::group_id:   RowLen += estimation.GIDnumber; break;
-            case FieldInfo::group_name: RowLen += estimation.GIDname; break;
+            case FieldInfo::user_id:    row_width += estimation.UIDnumber; break;
+            case FieldInfo::user_name:  row_width += estimation.UIDname; break;
+            case FieldInfo::group_id:   row_width += estimation.GIDnumber; break;
+            case FieldInfo::group_name: row_width += estimation.GIDname; break;
             case FieldInfo::num_different_fields:;
         }
-    if(file_too && FieldsToPrint.need_column_separator) ++RowLen;
-    return RowLen;
+    if(file_too && FieldsToPrint.need_column_separator) ++row_width;
+    return row_width;
 }
 
 static void EstimateFields()
@@ -649,21 +654,22 @@ static void EstimateFields()
 
     // Calculate the width of the string to be displayed.
     auto& Limits = Longest.front();
-    std::size_t RowLen = CalculateRowWidth(Limits, false);
+    std::size_t row_width = CalculateRowWidth(Limits, false);
 
-    // Calculate the room that there is for a filename
-    int room = MultiColumn ? COLS/2 : COLS;
-    room -= 2;
-    room -= RowLen;
-    if(room < 0) room = 0;
+    // Calculate the room that there is for a filename.
+    int room = std::max(0, (MultiColumn ? COLS/2 : COLS) - 2);
+    if(row_width >= static_cast<std::size_t>(room))
+        room = 0;
+    else
+        room -= static_cast<int>(row_width);
 
     if(!PreScan && !Limits.Name)
-        Limits.Name = std::min(13, COLS/2);
+        Limits.Name = static_cast<std::size_t>(std::min(13, std::max(0, COLS/2)));
 
     // If there is no room for the Limits name that we've found,
     // cut the name to the available room
-    if(int(Limits.Name) > room)
-        Limits.Name = room;
+    if(Limits.Name > static_cast<std::size_t>(room))
+        Limits.Name = static_cast<std::size_t>(room);
 }
 
 static void ResetEstimations()
@@ -683,7 +689,7 @@ static void UpdateEstimations(Estimation& Limits, const std::string& name, const
     {
         const char *hardlinkfn = Inodemap.get(Stat.st_dev, Stat.st_ino);
         if(hardlinkfn && name == hardlinkfn) hardlinkfn = nullptr;
-        Limits.Name = std::max(Limits.Name, std::size_t(GetName(name, Stat, 0, false, true, hardlinkfn)));
+        Limits.Name = std::max(Limits.Name, GetName(name, Stat, 0, false, true, hardlinkfn));
     }
 
     if(FieldsToPrint.used[FieldInfo::size])
@@ -733,22 +739,26 @@ static void PrintAllFilesCollectedSoFar()
 
         // Using binary search, find the shortest number of lines
         // where printing still works.
-        unsigned columns = 0;
-        auto acceptable = [&columns](unsigned lines)
+        std::size_t columns = 0;
+        auto acceptable = [&columns](std::size_t lines)
         {
             Longest.clear();
-            unsigned column = 1, line = 0, total_width = 0;
-            //printf("Trying %u lines\n", lines);
-            for(unsigned a=0; a<f.size(); ++a)
+            std::size_t column = 1, line = 0, total_width = 0;
+            const std::size_t max_width = COLS > 0
+                ? static_cast<std::size_t>(COLS - 1)
+                : 0;
+            //printf("Trying %zu lines\n", lines);
+            for(std::size_t a=0; a<f.size(); ++a)
             {
                 if(line == 0) Longest.emplace_back(); // add column
                 UpdateEstimations(Longest.back(), f[a].Name, f[a].Stat);
-                unsigned width = CalculateRowWidth(Longest.back(), true);
-                //printf("item %u on line %u column %u: column width now %u+%u\n", a, line,column, total_width, width);
-                if(total_width + width >= unsigned(COLS-1) && column > 1)
+                const std::size_t width = CalculateRowWidth(Longest.back(), true);
+                //printf("item %zu on line %zu column %zu: column width now %zu+%zu\n", a, line,column, total_width, width);
+                if(column > 1
+                && (total_width >= max_width || width >= max_width - total_width))
                 {
                     // This number of columns does not work.
-                    //printf("%u lines does not work at %u columns\n", lines,columns);
+                    //printf("%zu lines does not work at %zu columns\n", lines,columns);
                     return false;
                 }
                 if(++line >= lines)
@@ -758,30 +768,30 @@ static void PrintAllFilesCollectedSoFar()
                     ++column;
                 }
             }
-            //printf("%u lines works at %u columns\n", lines,column);
+            //printf("%zu lines works at %zu columns\n", lines,column);
             columns = column;
             return true;
         };
 
-        unsigned minimum_lines = 1;
-        unsigned maximum_lines = f.size();
+        std::size_t minimum_lines = 1;
+        std::size_t maximum_lines = f.size();
         while(minimum_lines < maximum_lines)
         {
-            unsigned middle = (minimum_lines + maximum_lines) / 2;
-            bool accept = acceptable(middle);
+            const std::size_t middle = minimum_lines + (maximum_lines - minimum_lines) / 2;
+            const bool accept = acceptable(middle);
             if(!accept) minimum_lines = middle+1;
             else        maximum_lines = middle;
         }
-        unsigned lines = minimum_lines;
+        const std::size_t lines = minimum_lines;
         acceptable(lines); // Repopulate "columns" and "longest[]"
 
         // Okay, this number works!
-        //printf("Successful choice at %u lines, %u columns\n", lines, columns);
+        //printf("Successful choice at %zu lines, %zu columns\n", lines, columns);
         Dumping = true;
         RowLen=0;
-        for(unsigned line=0; line<lines; ++line)
+        for(std::size_t line=0; line<lines; ++line)
         {
-            for(unsigned c=0; c<columns; ++c)
+            for(std::size_t c=0; c<columns; ++c)
             {
                 if(line + c*lines >= f.size()) break;
                 StatItem& tmp = f[line + c*lines];
@@ -901,12 +911,20 @@ static void DirChangeCheck(std::string_view Source)
     }
 }
 
+struct DirectoryCloser
+{
+    void operator()(DIR* directory) const noexcept
+    {
+        if(directory) (void)closedir(directory);
+    }
+};
+
 // ScanDir: Called with parameter = the verbatim string passed on commandline.
 // Will not call recursively.
 static void ScanDir(std::string&& Source) // Directory to list
 {
-    using DirectoryHandle = std::unique_ptr<DIR, decltype(&closedir)>;
-    DirectoryHandle dir(nullptr, &closedir);
+    using DirectoryHandle = std::unique_ptr<DIR, DirectoryCloser>;
+    DirectoryHandle dir;
 
     #ifdef DJGPP
     if(!Source.empty() && Source.back() == ':')
@@ -1009,20 +1027,28 @@ private:
     std::string opt_l(const std::string &s)
     {
         const char *q = s.c_str();
-        const char *p = q;
-        Links = strtol(p, const_cast<char**>(&p), 10);
-        if(Links < 0 || Links > 5)argerror(s);
-        return s.substr(p-q);
+        char *end = nullptr;
+        errno = 0;
+        const long parsed = std::strtol(q, &end, 10);
+        if(errno == ERANGE || parsed < 0 || parsed > 5) argerror(s);
+        Links = static_cast<int>(parsed);
+        return s.substr(static_cast<std::size_t>(end - q));
     }
 #endif
     std::string opt_X(const std::string &s)
     {
         const char *q = s.c_str();
-        const char *p = q;
-        if(*p == '0') { std::printf("Window size = %dx%d\n", COLS, LINES); }
-        int v = strtol(p, const_cast<char**>(&p), 10);
-        if(v) COLS = v;
-        return s.substr(p-q);
+        char *end = nullptr;
+        if(*q == '0') { std::printf("Window size = %dx%d\n", COLS, LINES); }
+        errno = 0;
+        const long parsed = std::strtol(q, &end, 10);
+        if(errno == ERANGE
+        || parsed < 0
+        || parsed > std::numeric_limits<int>::max())
+            argerror(s);
+        const int width = static_cast<int>(parsed);
+        if(width) COLS = width;
+        return s.substr(static_cast<std::size_t>(end - q));
     }
     std::string opt_H1(const std::string &s)
     {

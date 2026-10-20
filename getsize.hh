@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 #include "stat.h"
@@ -10,6 +11,6 @@ extern std::string BlkStr, ChrStr;
 /// @param space  max columns (0 = estimate — no output)
 /// @param seps   thousands separator (0 = none, -1 = compact SI)
 std::string GetSize(const std::string& path,
-                      const StatType& st,
-                      int space,
-                      int seps);
+                    const StatType& st,
+                    std::size_t space,
+                    int seps);

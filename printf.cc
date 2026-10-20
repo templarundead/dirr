@@ -3,6 +3,7 @@
 #include <sstream>
 #include <iomanip>
 #include <limits>
+#include <cmath>
 #include <tuple>
 #include <ios>
 #ifdef HAVE_CHARCONV
@@ -128,6 +129,37 @@ namespace PrintfPrivate
         return false;
     }
 
+    static unsigned ClampWidth(unsigned long long value)
+    {
+        constexpr auto max_width = static_cast<unsigned long long>(
+            std::numeric_limits<unsigned>::max());
+        return value > max_width
+            ? std::numeric_limits<unsigned>::max()
+            : static_cast<unsigned>(value);
+    }
+
+    template<typename T>
+    static char32_t ToCharacter(T value)
+    {
+        const auto max_value = static_cast<unsigned long long>(
+            std::numeric_limits<char32_t>::max());
+        if constexpr(std::is_floating_point_v<T>)
+        {
+            const long double numeric = static_cast<long double>(value);
+            if(!std::isfinite(numeric) || numeric < 0
+            || numeric > static_cast<long double>(max_value))
+                return U'?';
+        }
+        else if constexpr(std::is_signed_v<T>)
+        {
+            if(value < 0 || static_cast<unsigned long long>(value) > max_value)
+                return U'?';
+        }
+        else if(static_cast<unsigned long long>(value) > max_value)
+            return U'?';
+        return static_cast<char32_t>(value);
+    }
+
     static auto MakeInt(std::string_view part)
     {
         // We decide to judge it as a signed value.
@@ -156,8 +188,20 @@ namespace PrintfPrivate
         using TT = std::remove_cvref_t<T>;
         if constexpr(std::is_arithmetic_v<TT>)
         {
-            // Also converts floats to long long
-            return std::conditional_t<std::is_signed_v<T>, long long, unsigned long long>(part);
+            if constexpr(std::is_floating_point_v<TT>)
+            {
+                const long double value = static_cast<long double>(part);
+                if(!std::isfinite(value)) return 0LL;
+                if(value <= static_cast<long double>(std::numeric_limits<long long>::min()))
+                    return std::numeric_limits<long long>::min();
+                if(value >= static_cast<long double>(std::numeric_limits<long long>::max()))
+                    return std::numeric_limits<long long>::max();
+                return static_cast<long long>(value);
+            }
+            else if constexpr(std::is_signed_v<TT>)
+                return static_cast<long long>(part);
+            else
+                return static_cast<unsigned long long>(part);
         }
         else
         {
@@ -224,7 +268,7 @@ namespace PrintfPrivate
                 if constexpr(std::is_arithmetic_v<TT>)
                 {
                     //fprintf(stderr, "Formatting arith as char\n");
-                    char32_t n = part;
+                    char32_t n = ToCharacter(part);
                     DoString(arg, result, std::basic_string_view<char32_t>(&n, 1));
                     return;
                 }
@@ -288,7 +332,7 @@ namespace PrintfPrivate
                     while(upart != 0)
                     {
                         // Append the digits in reverse order
-                        unsigned digit = upart % base; upart /= base;
+                        unsigned digit = static_cast<unsigned>(upart % base); upart /= base;
                         digitbuf[--begin] = digits[digit];
                     }
 
@@ -396,10 +440,11 @@ void PrintfFormatter::ExecutePart(PrintfFormatter::State& state, T part) /* Note
                 if(IsNegative(p))
                 {
                     state.leftalign = true;
-                    state.minwidth  = -p;
+                    const auto magnitude = 0ull - static_cast<unsigned long long>(p);
+                    state.minwidth = ClampWidth(magnitude);
                 }
                 else
-                    state.minwidth = p;
+                    state.minwidth = ClampWidth(static_cast<unsigned long long>(p));
 
                 state.position = pos*4 + 1;
                 return;
@@ -410,8 +455,10 @@ void PrintfFormatter::ExecutePart(PrintfFormatter::State& state, T part) /* Note
             {
                 // This param should be an integer.
                 auto p = MakeInt(std::move(part));
-                //fprintf(stderr, "maxwidth=%lld\n", (long long)p);
-                state.maxwidth = p;
+                // A negative precision means "no precision limit".
+                state.maxwidth = IsNegative(p)
+                    ? std::numeric_limits<unsigned>::max()
+                    : ClampWidth(static_cast<unsigned long long>(p));
                 state.position = pos*4 + 2;
                 return;
             }

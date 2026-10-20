@@ -137,12 +137,12 @@ static void FlushSetAttr()
                 param();
                 if(value >= 100)
                 {
-                    if(value >= 10000) Buffer[Buflen++] = '0' + (value/10000u)%10u;
-                    if(value >= 1000)  Buffer[Buflen++] = '0' + (value/1000u)%10u;
-                    Buffer[Buflen++] = '0' + (value/100u)%10u;
+                    if(value >= 10000) Buffer[Buflen++] = static_cast<char>('0' + (value/10000u)%10u);
+                    if(value >= 1000)  Buffer[Buflen++] = static_cast<char>('0' + (value/1000u)%10u);
+                    Buffer[Buflen++] = static_cast<char>('0' + (value/100u)%10u);
                 }
-                if(value >= 10) Buffer[Buflen++] = '0' + (value/10u)%10u;
-                Buffer[Buflen++] = '0' + (value/1u)%10u;
+                if(value >= 10) Buffer[Buflen++] = static_cast<char>('0' + (value/10u)%10u);
+                Buffer[Buflen++] = static_cast<char>('0' + (value/1u)%10u);
             };
             auto appcolor = [&](int value, int lowdelta, int highdelta, const char* xterm)
             {
@@ -278,7 +278,7 @@ int Gputch(int x)
     if(x != ' ' || BackgroundOf(TextAttr) != BackgroundOf(OldAttr))
         FlushSetAttr();
 
-    auto put = [](char c)
+    auto put = [](int c)
     {
 #ifdef DJGPP
         (Colors?putch:putchar)(c);
@@ -358,7 +358,12 @@ int Gputch(int x)
             else
             {
                 while(Spaces > 0)
-                    Spaces -= std::fwrite(spacebuf, 1, std::min(int(sizeof spacebuf), Spaces), stdout);
+                {
+                    const auto count = static_cast<std::size_t>(
+                        std::min(int(sizeof spacebuf), Spaces));
+                    const auto written = std::fwrite(spacebuf, 1, count, stdout);
+                    Spaces -= static_cast<int>(written); // count never exceeds sizeof spacebuf
+                }
             }
     #endif
             put(x);

@@ -1,4 +1,7 @@
 #include <config.h>
+
+#include <limits>
+
 #include "getname.hh"
 #include "strfun.hh"
 #include "setfun.hh"
@@ -12,10 +15,10 @@ static const char HLinkArrow[] = " = ";
 int Links;
 #endif
 
-int GetName(std::string fn /* modified, so operate on a copy */,
-            const StatType &sta, int Space,
-            bool Fill, bool nameonly,
-            const char *hardlinkfn)
+std::size_t GetName(std::string fn /* modified, so operate on a copy */,
+                    const StatType &sta, int Space,
+                    bool Fill, bool nameonly,
+                    const char *hardlinkfn)
 {
     const StatType *Stat = &sta;
     // The formatter re-enters Redo with these records. Keep them alive for the
@@ -23,7 +26,7 @@ int GetName(std::string fn /* modified, so operate on a copy */,
     StatType LinkStat{};
     StatType HardlinkStat{};
 
-    unsigned Len = 0;
+    std::size_t Len = 0;
     bool estimating = (Space == 0);
     bool maysublink = true;
     bool wasinvalid = false;
@@ -38,13 +41,23 @@ Redo:
 
     auto PrintIfRoom = [&](std::string_view what)
     {
-        int i = WidthInColumns(what);
-        Len += i;
+        std::size_t width = WidthInColumns(what);
+        Len += width;
 
-        if(i > Space && nameonly) i = Space;
+        const std::size_t space_left = Space > 0 ? static_cast<std::size_t>(Space) : 0;
+        if(width > space_left && nameonly) width = space_left;
 
-        int j = WidthPrint(i, what, Fill);
-        Space -= j;
+        const std::size_t printed = WidthPrint(width, what, Fill);
+        if(printed > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+            Space = std::numeric_limits<int>::min();
+        else
+        {
+            const int printed_width = static_cast<int>(printed);
+            if(Space < std::numeric_limits<int>::min() + printed_width)
+                Space = std::numeric_limits<int>::min();
+            else
+                Space -= printed_width;
+        }
     };
     auto PutSet = [&](char ch)
     {
@@ -53,7 +66,7 @@ Redo:
         else if(Space)
         {
             ++Len;
-            --Space;
+            if(Space > std::numeric_limits<int>::min()) --Space;
             GetModeColor(ColorMode::INFO, ch);
             Gputch(ch);
         }

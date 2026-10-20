@@ -10,6 +10,8 @@
 #include <unordered_map>
 
 #include <climits>   // For CHAR_BIT
+#include <limits>
+#include <stdexcept>
 #include <utility>   // for std::hash
 #include <algorithm> // For sort, unique, min
 
@@ -76,6 +78,19 @@ static constexpr unsigned DFAOPT_ACCEPT_OFFSET            = 0x80000000u;
 // Character set size.
 static constexpr unsigned CHARSET_SIZE = (1u << CHAR_BIT);
 
+static unsigned CheckedStateCount(std::size_t count)
+{
+    if(count > NFA_ACCEPT_OFFSET)
+        throw std::length_error("DFA state count exceeds the supported range");
+    return static_cast<unsigned>(count);
+}
+
+static unsigned CheckedStateIndex(std::size_t index)
+{
+    if(index >= NFA_ACCEPT_OFFSET)
+        throw std::length_error("DFA state index exceeds the supported range");
+    return static_cast<unsigned>(index);
+}
 
 
 /* Bit I/O */
@@ -87,8 +102,10 @@ static void PutBits(void* memory, unsigned& bitpos, unsigned long long V, unsign
         unsigned bytepos = bitpos/CHAR_BIT, bits_remain = CHAR_BIT-bitpos%CHAR_BIT, bits_taken = CHAR_BIT-bits_remain;
         unsigned bits_to_write = std::min(nbits, bits_remain);
         unsigned value_mask     = (1 << bits_to_write)-1;
-        unsigned value_to_write = V & value_mask;
-        buffer[bytepos] = (buffer[bytepos] & ~(value_mask << bits_taken)) | (value_to_write << bits_taken);
+        const unsigned value_to_write = static_cast<unsigned>(V & value_mask);
+        buffer[bytepos] = static_cast<unsigned char>(
+            (buffer[bytepos] & ~(value_mask << bits_taken))
+            | (value_to_write << bits_taken));
         V >>= bits_to_write;
         nbits  -= bits_to_write;
         bitpos += bits_to_write;
@@ -124,21 +141,33 @@ static char hash_offset = '*', swap50_rotation = 45;
 
 
 // VarBitCounts[] is hand-optimized to produce the smallest save file for DIRR.
-static unsigned long long LoadVarBit(const void* buffer, unsigned& bitpos)
+static bool LoadBit(const void* buffer, unsigned& bitpos, std::size_t bit_limit, bool& result)
 {
-    unsigned long long result = 0;
+    if(bitpos >= bit_limit) return false;
+    result = GetBits(buffer, bitpos, 1) != 0;
+    return true;
+}
+
+static bool LoadVarBit(const void* buffer, unsigned& bitpos, std::size_t bit_limit,
+                       unsigned long long& result)
+{
+    constexpr unsigned value_bits = sizeof(result)*CHAR_BIT;
+    result = 0;
     unsigned shift = 0;
     for(unsigned n: VarBitCounts)
     {
-        unsigned long long unit = GetBits(buffer, bitpos, n);
+        if(bitpos > bit_limit || n > bit_limit-bitpos) return false;
+        const unsigned long long unit = GetBits(buffer, bitpos, n);
+        if(shift >= value_bits || n > value_bits-shift) return false;
         result |= unit << shift;
-        //if(unit==0)
-        {
-            if(!GetBits(buffer, bitpos, 1) || unlikely(shift >= sizeof(result)*CHAR_BIT)) break;
-        }
+
+        bool more = false;
+        if(!LoadBit(buffer, bitpos, bit_limit, more)) return false;
+        if(!more) return true;
+        if(n >= value_bits-shift) return false;
         shift += n;
     }
-    return result;
+    return false;
 }
 static void PutVarBit(void* buffer, unsigned& bitpos, unsigned long long V)
 {
@@ -288,18 +317,49 @@ public:
     {
         // Recompose matches[] from hash_buf
         if(hash_buf.empty()) return;
-        unsigned ptr = 0, nmatches = LoadVarBit(&hash_buf[0], ptr);
-        matches.assign(nmatches, Match{});
+        if(hash_buf.size() > std::numeric_limits<std::size_t>::max()/CHAR_BIT)
+        {
+            matches.clear();
+            return;
+        }
+        const std::size_t bit_limit = hash_buf.size()*CHAR_BIT;
+        unsigned ptr = 0;
+        unsigned long long encoded_matches = 0;
+        if(!LoadVarBit(&hash_buf[0], ptr, bit_limit, encoded_matches)
+        || encoded_matches > matches.max_size())
+        {
+            matches.clear();
+            return;
+        }
+        matches.assign(static_cast<std::size_t>(encoded_matches), Match{});
         for(auto& m: matches)
         {
-            while(ptr/CHAR_BIT < hash_buf.size())
+            for(;;)
             {
-                char c = (LoadVarBit(&hash_buf[0], ptr) + hash_offset) & 0xFF;
+                unsigned long long encoded_byte = 0;
+                if(!LoadVarBit(&hash_buf[0], ptr, bit_limit, encoded_byte)
+                || encoded_byte > 0xFF)
+                {
+                    matches.clear();
+                    return;
+                }
+                const char c = static_cast<char>((encoded_byte + hash_offset) & 0xFFu);
                 if(!c) break;
                 m.token += c;
             }
-            m.icase  = GetBits(&hash_buf[0], ptr, 1);
-            m.target = LoadVarBit(&hash_buf[0], ptr);
+            if(!LoadBit(&hash_buf[0], ptr, bit_limit, m.icase))
+            {
+                matches.clear();
+                return;
+            }
+            unsigned long long target = 0;
+            if(!LoadVarBit(&hash_buf[0], ptr, bit_limit, target)
+            || target > static_cast<unsigned long long>(std::numeric_limits<int>::max()))
+            {
+                matches.clear();
+                return;
+            }
+            m.target = static_cast<int>(target);
         }
     }
 };
@@ -649,9 +709,10 @@ static unsigned char swap50(unsigned char c)
     // 76543210
     // hgFedcbA hgAedcbF
     if(!c) return c;
-    c = ((c-1) + (swap50_rotation&0xFF)) % 255 + 1;
+    c = static_cast<unsigned char>(((c-1) + (swap50_rotation&0xFF)) % 255 + 1);
     if(c >= 0x40 && c < 0x80)
-        c = (c & ~(32u|1u)) | ((c&1u)<<5u) | ((c>>5u)&1u);
+        c = static_cast<unsigned char>(
+            (c & ~(32u|1u)) | ((c&1u)<<5u) | ((c>>5u)&1u));
     return c;
 }
 
@@ -669,33 +730,49 @@ bool DFA_Matcher::Load(std::istream& f, bool ignore_hash)
     std::vector<char> Buf(32);
     f.read(&Buf[0], Buf.size());
     if(!f.good()) return false;
-    unsigned position    = 0;
-    unsigned num_bits    = LoadVarBit(&Buf[0], position);
-    unsigned num_states  = LoadVarBit(&Buf[0], position);
-    unsigned hash_length = LoadVarBit(&Buf[0], position);
+    unsigned position = 0;
+    const std::size_t header_bit_limit = Buf.size()*CHAR_BIT;
+    unsigned long long raw_num_bits = 0;
+    unsigned long long raw_num_states = 0;
+    unsigned long long raw_hash_length = 0;
+    if(!LoadVarBit(&Buf[0], position, header_bit_limit, raw_num_bits)
+    || !LoadVarBit(&Buf[0], position, header_bit_limit, raw_num_states)
+    || !LoadVarBit(&Buf[0], position, header_bit_limit, raw_hash_length)) return false;
+    constexpr unsigned long long max_state_bytes = 8000000;
+    const unsigned long long max_states =
+        max_state_bytes / (CHARSET_SIZE * sizeof(unsigned));
+
+    // Validate the serialized values before narrowing or using them in size
+    // calculations. The file can be user-provided and the varint is 64-bit.
+    if(raw_num_states == 0
+    || raw_num_states > max_states
+    || raw_hash_length > 0x200000
+    || raw_num_bits > std::numeric_limits<unsigned>::max()
+    || raw_num_bits > raw_num_states * CHARSET_SIZE * 42ull)
+        return false;
+
+    const unsigned num_bits = static_cast<unsigned>(raw_num_bits);
+    const unsigned num_states = static_cast<unsigned>(raw_num_states);
+    const unsigned hash_length = static_cast<unsigned>(raw_hash_length);
 
     if(!ignore_hash && hash_length != data->hash_buf.size()) return false;
 
-    if(hash_length > 0x200000) return false; // Implausible length
-    if(num_states*CHARSET_SIZE*sizeof(unsigned) > 8000000
-    || num_bits > num_states*CHARSET_SIZE*42)
-    {
-        // implausible num_states
-        return false;
-    }
-    unsigned num_bytes = (num_bits+CHAR_BIT-1)/CHAR_BIT;
+    const std::size_t num_bytes = num_bits/CHAR_BIT + (num_bits%CHAR_BIT != 0);
     if(num_bytes > Buf.size())
     {
-        unsigned already = Buf.size(), missing = num_bytes - already;
+        const std::size_t already = Buf.size();
+        const std::size_t missing = num_bytes - already;
         Buf.resize(num_bytes);
-        f.read(&Buf[already], missing);
+        f.read(&Buf[already], static_cast<std::streamsize>(missing));
+        if(!f) return false;
     }
 
     std::vector<char> loaded_hash;
     for(unsigned l=0; l<hash_length; ++l)
     {
-        if(position >= num_bits) return false;
-        loaded_hash.push_back( LoadVarBit(&Buf[0], position) );
+        unsigned long long byte = 0;
+        if(!LoadVarBit(&Buf[0], position, num_bits, byte) || byte > 0xFF) return false;
+        loaded_hash.push_back(static_cast<char>(byte));
     }
     if(!ignore_hash && loaded_hash != data->hash_buf) return false;
 
@@ -705,15 +782,24 @@ bool DFA_Matcher::Load(std::istream& f, bool ignore_hash)
         auto& target = newstatemachine[state_no];
         for(unsigned last = 0; last < CHARSET_SIZE; )
         {
-            if(position >= num_bits) return false;
-            unsigned end   = LoadVarBit(&Buf[0], position) + last;
-            unsigned value = LoadVarBit(&Buf[0], position);
-            if(end==last) end = last+CHARSET_SIZE;
-            while(last < end && last < CHARSET_SIZE) target[swap50(last++)] = value;
+            unsigned long long raw_run_length = 0;
+            unsigned long long raw_value = 0;
+            if(!LoadVarBit(&Buf[0], position, num_bits, raw_run_length)
+            || !LoadVarBit(&Buf[0], position, num_bits, raw_value)
+            || raw_run_length > CHARSET_SIZE
+            || raw_value > std::numeric_limits<unsigned>::max()) return false;
+            const unsigned long long max_target = static_cast<unsigned long long>(num_states)
+                + 1ull + static_cast<unsigned long long>(std::numeric_limits<int>::max());
+            if(raw_value > max_target) return false;
+            unsigned end = static_cast<unsigned>(raw_run_length) + last;
+            const unsigned value = static_cast<unsigned>(raw_value);
+            if(end == last) end = last + CHARSET_SIZE;
+            while(last < end && last < CHARSET_SIZE)
+                target[swap50(static_cast<unsigned char>(last++))] = value;
         }
     }
-    // Allow maximum of 16 bits of blank in the end
-    if(long(position) > long(num_bits) || long(position)+16 < long(num_bits)) return false;
+    // Allow maximum of 16 bits of blank in the end.
+    if(position > num_bits || num_bits-position > 16) return false;
 
     data->statemachine = std::move(newstatemachine);
 #ifndef PUTBIT_OPTIMIZER
@@ -754,10 +840,12 @@ void DFA_Matcher::Save(std::ostream& f) const
 
         for(const auto& a: data->statemachine)
             for(unsigned sum=0, n=0; n<=CHARSET_SIZE; ++n, ++sum)
-                if(sum > 0 && (n == CHARSET_SIZE || a[swap50(n)] != a[swap50(n-1)]))
+                if(sum > 0 && (n == CHARSET_SIZE
+                            || a[swap50(static_cast<unsigned char>(n))]
+                             != a[swap50(static_cast<unsigned char>(n-1))]))
                 {
                     PutVarBit(Buf, ptr, sum);
-                    PutVarBit(Buf, ptr, a[swap50(n-1)]);
+                    PutVarBit(Buf, ptr, a[swap50(static_cast<unsigned char>(n-1))]);
                     sum = 0;
                 }
 
@@ -873,10 +961,10 @@ private:
         if(next == ~0u)
         {
             // Make new node
-            next = nfa_nodes.size();
-            nfa_nodes.resize(next+1);
+            next = CheckedStateIndex(nfa_nodes.size());
+            nfa_nodes.resize(static_cast<std::size_t>(next)+1);
             if(NFA_MINIMIZATION_FLAGS & 0x06)
-                parents.resize(next+1);
+                parents.resize(static_cast<std::size_t>(next)+1);
         }
 
         auto& cur = nfa_nodes[root];
@@ -918,7 +1006,7 @@ public:
                     // Repeat count of zero is allowed, so we begin with the same roots
                     // In each root, add an instance of these states
                     unsigned newnewnode = ~0u;
-                    for(unsigned a=0, b=rootnodes.size(); a<b; ++a) // b caches the size before we started adding
+                    for(std::size_t a=0, b=rootnodes.size(); a<b; ++a) // b caches the size before we started adding
                     {
                         unsigned root = rootnodes[a], nextnode = AddTransition(root, newnewnode);
                         if(nextnode != root)
@@ -1072,8 +1160,9 @@ public:
         // If there is a node where all states lead into
         // either itself, or into the same accepting state,
         // change all its parent pointers into acception
-        for(unsigned root=nfa_nodes.size(); root-- > 0; )
+        for(std::size_t root_index=nfa_nodes.size(); root_index-- > 0; )
         {
+            const unsigned root = CheckedStateIndex(root_index);
             unsigned accept=0;
             for(auto& t: nfa_nodes[root])
             {
@@ -1101,8 +1190,9 @@ public:
         std::cout << "-----------------------------------------------------\n";
 #endif
         // Find all nodes that contain only accepting states
-        for(unsigned n=nfa_nodes.size(); n-- > 0; )
+        for(std::size_t node_index=nfa_nodes.size(); node_index-- > 0; )
         {
+            const unsigned n = CheckedStateIndex(node_index);
             /*for(auto& t: nfa_nodes[n])
                 for(auto v: t)
                     if(v < NFA_ACCEPT_OFFSET)
@@ -1111,7 +1201,7 @@ public:
         //non_candidate2:;
         }
 
-        unsigned n_nodes_to_keep = nfa_nodes.size();
+        unsigned n_nodes_to_keep = CheckedStateCount(nfa_nodes.size());
         while(n_nodes_to_keep > 0 && (n_nodes_to_keep-1) < deadnodes.size() && deadnodes[n_nodes_to_keep-1])
             --n_nodes_to_keep;
         if(n_nodes_to_keep < nfa_nodes.size())
@@ -1156,6 +1246,8 @@ private:
             return i->second;
 
         // Create if necessary.
+        if(nodecounter >= NFA_ACCEPT_OFFSET)
+            throw std::length_error("DFA state count exceeds the supported range");
         unsigned target_id = nodecounter++;
         pending.emplace_back(target_id, std::move(targets));
         // Don't resize nfa_nodes[] here, as there are still references to it.
@@ -1169,7 +1261,7 @@ public:
 #ifdef DEBUG
         DumpNFA(std::cout, "Original NFA", nfa_nodes);
 #endif
-        unsigned number_of_old_nodes = nfa_nodes.size();
+        unsigned number_of_old_nodes = CheckedStateCount(nfa_nodes.size());
         nodecounter = number_of_old_nodes;
 
         // Create the first new node from the combination of original node 0.
@@ -1234,7 +1326,7 @@ public:
     {
         for(auto& s: nfa_nodes) for(auto& c: s) c.MakeSureIsSortedAndUnique();
 
-        StateMachineType result(nfa_nodes.size());
+        StateMachineType result(CheckedStateCount(nfa_nodes.size()));
         for(unsigned n=0; n<nfa_nodes.size(); ++n)
         {
             auto& s = nfa_nodes[n];
@@ -1329,10 +1421,10 @@ recalculate_uses:
         // Now delete states that were previously found to be unused.
         // State 0 will not be deleted, as it implicitly has a use count of ~0u.
         auto i = &info[0]; while(++i != &info[info_size] && i->uses) {}
-        info_size = std::remove_if(i,&info[info_size],[](const Info& m)
+        info_size = static_cast<unsigned>(std::remove_if(i,&info[info_size],[](const Info& m)
         {
             return m.uses==0;
-        }) - &info[0];
+        }) - &info[0]);
     #ifdef DEBUG
         std::cout << (old_num_states-info_size) << " DFA states deleted\n";
     #endif
@@ -1442,7 +1534,7 @@ rewritten:;
         if(!othergroup.empty())
         {
             // Split the differing states into a new group
-            unsigned othergroup_id = groups.size();
+            unsigned othergroup_id = CheckedStateIndex(groups.size());
             // Change the mappings (we need overwriting, so don't use emplace here)
             for(auto n: othergroup) mapping.set(n, othergroup_id);
             groups.emplace_back(std::move(othergroup));
@@ -1454,7 +1546,7 @@ rewritten:;
     // original state 0, emerges as group 0 in the new ordering.
 
     // Create a new state machine based on these groups
-    StateMachineType newstates(groups.size());
+    StateMachineType newstates(CheckedStateCount(groups.size()));
     for(unsigned newstateno=0; newstateno<groups.size(); ++newstateno)
     {
         auto& group          = groups[newstateno];
