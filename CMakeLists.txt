@@ -238,6 +238,24 @@ install(TARGETS dirr
 # ─────────────────────────────────────────────────────────────────────
 if(BUILD_TESTING)
     enable_testing()
+
+    add_executable(dirr-dfa-cache-smoke
+        tests/dfa-cache-smoke.cc
+        dfa_match.cc
+    )
+    target_include_directories(dirr-dfa-cache-smoke BEFORE PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    if(Threads_FOUND)
+        target_link_libraries(dirr-dfa-cache-smoke PRIVATE Threads::Threads)
+    endif()
+    if(DIRR_ENABLE_SANITIZER)
+        target_compile_options(dirr-dfa-cache-smoke PRIVATE -fsanitize=address,undefined)
+        target_link_options(dirr-dfa-cache-smoke PRIVATE -fsanitize=address,undefined)
+    endif()
+    add_test(NAME dirr-dfa-cache-smoke COMMAND dirr-dfa-cache-smoke)
+
     add_test(NAME dirr-help
         COMMAND dirr --help
     )
