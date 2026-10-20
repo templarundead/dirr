@@ -66,6 +66,10 @@ all=$("$binary" -A -c --format=.f "$work")
 printf '%s\n' "$all"
 printf '%s' "$all" | grep -Fq '.hidden'
 
+# Force color-mode initialization to exercise the extension-pattern DFA cache.
+"$binary" -c1 --format=.f "$work" >"$logs/cache-create.out"
+grep -Fq 'visible.txt' "$logs/cache-create.out"
+
 # Exercise both loading a valid DFA cache and safely regenerating a corrupt one.
 if [ ! -s "$home/.dirr_dfa" ]; then
     echo 'DFA cache was not created' >&2
@@ -73,7 +77,7 @@ if [ ! -s "$home/.dirr_dfa" ]; then
 fi
 dd if=/dev/zero bs=32 count=1 2>/dev/null | tr '\000' '\377' > "$logs/corrupt.dfa"
 cp "$logs/corrupt.dfa" "$home/.dirr_dfa"
-"$binary" -c --format=.f "$work" >"$logs/cache-recovery.out"
+"$binary" -c1 --format=.f "$work" >"$logs/cache-recovery.out"
 grep -Fq 'visible.txt' "$logs/cache-recovery.out"
 if cmp -s "$logs/corrupt.dfa" "$home/.dirr_dfa"; then
     echo 'corrupt DFA cache was not replaced' >&2
