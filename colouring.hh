@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string_view>
 
 #include "stat.h"
@@ -8,7 +9,7 @@
 // Uses std::string_view, [[nodiscard]], noexcept and concepts.
 
 int GetNameAttr(const StatType& stat, std::string_view filename);
-int PrintAttr(const StatType& stat, char attrs);
+std::size_t PrintAttr(const StatType& stat, char attrs);
 #ifdef DJGPP
-int PrintAttr(const StatType& stat, char attrs, unsigned dosattr);
+std::size_t PrintAttr(const StatType& stat, char attrs, unsigned dosattr);
 #endif

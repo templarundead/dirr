@@ -146,14 +146,22 @@ public:
 
             if(i == colors.end() || i->first != Chr)
             {
+#ifdef HAVE_FORMAT
+                Gformat("DIRR_COLORS error: No color for '{}' found in '{}'\n", Chr, ColorModeName(key));
+#else
                 Gprintf("DIRR_COLORS error: No color for '%c' found in '%s'\n", Chr, ColorModeName(key));
+#endif
                 return default_color;
             }
             return i->second;
         }
         else
         {
+#ifdef HAVE_FORMAT
+            Gformat("DIRR_COLORS error: No '{}'\n", ColorModeName(key));
+#else
             Gprintf("DIRR_COLORS error: No '%s'\n", ColorModeName(key));
+#endif
             return default_color;
         }
     }
@@ -169,7 +177,11 @@ public:
         else
         {
         fail:;
+#ifdef HAVE_FORMAT
+            Gformat("DIRR_COLORS error: No '{}'\n", ColorDescrName(key));
+#else
             Gprintf("DIRR_COLORS error: No '%s'\n", ColorDescrName(key));
+#endif
             return default_color;
         }
     }
@@ -271,7 +283,11 @@ private:
                 int m = ColorDescrFromName(s.first);
                 if(m == -1)
                 {
+#ifdef HAVE_FORMAT
+                    Gformat("DIRR_COLORS error: Unknown setting '{}'\n", s.first);
+#else
                     Gprintf("DIRR_COLORS error: Unknown setting '%s'\n", s.first);
+#endif
                     continue;
                 }
                 if(int(descr_sets.size()) <= m) descr_sets.resize(m+1);
@@ -433,7 +449,11 @@ void PrintSettings()
     for(unsigned m=0; m<Settings.mode_sets.size(); ++m)
     {
         SetAttr(Dfl);
+#ifdef HAVE_FORMAT
+        Gformat("{}{}(", indent, ColorModeName(ColorMode(m)));
+#else
         Gprintf("%s%s(", indent, ColorModeName(ColorMode(m)));
+#endif
         bool sep = false;
         for(const auto& c: Settings.mode_sets[m])
         {
@@ -449,7 +469,11 @@ void PrintSettings()
     for(unsigned m=0; m<Settings.descr_sets.size(); ++m)
     {
         SetAttr(Dfl);
+#ifdef HAVE_FORMAT
+        Gformat("{}{}(", indent, ColorDescrName(ColorDescr(m)));
+#else
         Gprintf("%s%s(", indent, ColorDescrName(ColorDescr(m)));
+#endif
         const auto& table = Settings.descr_sets[m];
         for(std::size_t a=0; a<table.size(); ++a)
         {
@@ -467,7 +491,11 @@ void PrintSettings()
         while(pair.first != pair.second)
         {
             SetAttr(Dfl);
+#ifdef HAVE_FORMAT
+            Gformat("{}byext(", indent);
+#else
             Gprintf("%sbyext(", indent);
+#endif
             const std::string& t = pair.first++->second;
 
             int color = -1;
@@ -488,7 +516,11 @@ void PrintSettings()
                     pos = spacepos;
                     continue;
                 }
+#ifdef HAVE_FORMAT
+                Gformat(" {}", token);
+#else
                 Gprintf(" %s", token);
+#endif
                 pos = spacepos;
             }
             SetAttr(Dfl);

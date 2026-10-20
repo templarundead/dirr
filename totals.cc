@@ -73,7 +73,7 @@ void PrintSums()
         SizeType Tmp = SumCnt[SumChrDev] + SumCnt[SumBlkDev];
         SizeType Tmp2= SumCnt[SumFifo]+SumCnt[SumSock]+SumCnt[SumLink];
 
-        PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumDir]);
+        PrintNum(NumBuf, TotalSep, SumCnt[SumDir]);
         Gprintf(" \1%s\1 dir%s%s", NumBuf,
 #ifdef HAVE_STATFS
             (tmp.f_bavail > 0 && Tmp)?"":
@@ -87,7 +87,7 @@ void PrintSums()
 
         if(SumCnt[SumFile])
         {
-            PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumFile]);
+            PrintNum(NumBuf, TotalSep, SumCnt[SumFile]);
             Gprintf(", \1%s\1 file%s",
                 NumBuf,
                 SumCnt[SumFile]==1?"":"s");
@@ -95,16 +95,16 @@ void PrintSums()
 
         if(Tmp)
         {
-            PrintNum(NumBuf, TotalSep, SizeFormat, Tmp);
+            PrintNum(NumBuf, TotalSep, Tmp);
             Gprintf(", \1%s\1 device%s", NumBuf, Tmp==1?"":"s");
         }
         if(Tmp2)
         {
-            PrintNum(NumBuf, TotalSep, SizeFormat, Tmp2);
+            PrintNum(NumBuf, TotalSep, Tmp2);
             Gprintf(", \1%s\1 other%s", NumBuf, Tmp2==1?"":"s");
         }
 
-        PrintNum(NumBuf, TotalSep, SizeFormat, Koko);
+        PrintNum(NumBuf, TotalSep, Koko);
         Gprintf(", \1%s\1 bytes", NumBuf);
 
 #ifdef HAVE_STATFS
@@ -115,28 +115,33 @@ void PrintSums()
 
             if(Compact == 2)
             {
-                PrintNum(NumBuf, TotalSep, "%.0f", Size*1024.0);
+                PrintNumFixed<0>(NumBuf, TotalSep, Size*1024.0);
                 Gprintf(", \1%s\1 bytes", NumBuf);
             }
             else if(Size >= 1024)
             {
-                PrintNum(NumBuf, TotalSep, "%.1f", Size/1024.0);
+                PrintNumFixed<1>(NumBuf, TotalSep, Size/1024.0);
                 Gprintf(", \1%s\1 MB", NumBuf);
             }
             else if(Size >= 1048576*10)
             {
-                PrintNum(NumBuf, TotalSep, "%.1f", Size/1048576.0);
+                PrintNumFixed<1>(NumBuf, TotalSep, Size/1048576.0);
                 Gprintf(", \1%s\1 GB", NumBuf);
             }
             else
             {
-                PrintNum(NumBuf, TotalSep, "%.1f", Size);
+                PrintNumFixed<1>(NumBuf, TotalSep, Size);
                 Gprintf(", \1%s\1 kB", NumBuf);
             }
 
-            Gprintf(" free(\1%.1f\1%%)",
-                static_cast<double>(tmp.f_bavail) * 100.0
-                / static_cast<double>(tmp.f_blocks));
+            const double free_percent = static_cast<double>(tmp.f_bavail) * 100.0
+                                      / static_cast<double>(tmp.f_blocks);
+#ifdef HAVE_FORMAT
+            Gformat(" free(\1{:.1f}\1%)", free_percent);
+#else
+            PrintNumFixed<1>(NumBuf, '\0', free_percent);
+            Gprintf(" free(\1%s\1%%)", NumBuf);
+#endif
         }
 #endif
         Gprintf("\n");
@@ -147,19 +152,19 @@ void PrintSums()
 
         if(Tmp)
         {
-            PrintNum(NumBuf, TotalSep, SizeFormat, Tmp);
+            PrintNum(NumBuf, TotalSep, Tmp);
             Gprintf("\1%5s\1 device%s (", NumBuf, (Tmp==1)?"":"s");
 
             if(SumCnt[SumChrDev])
             {
-                PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumChrDev]);
+                PrintNum(NumBuf, TotalSep, SumCnt[SumChrDev]);
                 Gprintf("\1%s\1 char", NumBuf);
             }
             if(SumCnt[SumChrDev]
             && SumCnt[SumBlkDev])Gprintf(", ");
             if(SumCnt[SumBlkDev])
             {
-                PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumBlkDev]);
+                PrintNum(NumBuf, TotalSep, SumCnt[SumBlkDev]);
                 Gprintf("\1%s\1 block", NumBuf);
             }
             Gprintf(")\n");
@@ -168,8 +173,8 @@ void PrintSums()
         if(SumCnt[SumDir])
         {
             std::string TmpBuf;
-            PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumDir]);
-            PrintNum(TmpBuf, TotalSep, SizeFormat, SumSizes[SumDir]);
+            PrintNum(NumBuf, TotalSep, SumCnt[SumDir]);
+            PrintNum(TmpBuf, TotalSep, SumSizes[SumDir]);
             Gprintf("\1%5s\1 directories,\1%11s\1 bytes\n",
                 NumBuf, TmpBuf);
         }
@@ -177,28 +182,28 @@ void PrintSums()
         if(SumCnt[SumFifo])
         {
             std::string TmpBuf;
-            PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumFifo]);
-            PrintNum(TmpBuf, TotalSep, SizeFormat, SumSizes[SumFifo]);
+            PrintNum(NumBuf, TotalSep, SumCnt[SumFifo]);
+            PrintNum(TmpBuf, TotalSep, SumSizes[SumFifo]);
             Gprintf("\1%5s\1 fifo%s\1%17s\1 bytes\n",
                 NumBuf, (SumCnt[SumFifo]==1)?", ":"s,", TmpBuf);
         }
         if(SumCnt[SumFile])
         {
             std::string TmpBuf;
-            PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumFile]);
-            PrintNum(TmpBuf, TotalSep, SizeFormat, SumSizes[SumFile]);
+            PrintNum(NumBuf, TotalSep, SumCnt[SumFile]);
+            PrintNum(TmpBuf, TotalSep, SumSizes[SumFile]);
             Gprintf("\1%5s\1 file%s\1%17s\1 bytes\n",
                 NumBuf, (SumCnt[SumFile]==1)?", ":"s,", TmpBuf);
         }
         if(SumCnt[SumLink])
         {
             std::string TmpBuf;
-            PrintNum(NumBuf, TotalSep, SizeFormat, SumCnt[SumLink]);
-            PrintNum(TmpBuf, TotalSep, SizeFormat, SumSizes[SumLink]);
+            PrintNum(NumBuf, TotalSep, SumCnt[SumLink]);
+            PrintNum(TmpBuf, TotalSep, SumSizes[SumLink]);
             Gprintf("\1%5s\1 link%s\1%17s\1 bytes\n",
                 NumBuf, (SumCnt[SumLink]==1)?", ":"s,", TmpBuf);
         }
-        PrintNum(NumBuf, TotalSep, SizeFormat, Koko);
+        PrintNum(NumBuf, TotalSep, Koko);
         Gprintf("Total\1%24s\1 bytes\n", NumBuf);
 #ifdef HAVE_STATFS
         if(tmp.f_bavail > 0)
@@ -210,12 +215,19 @@ void PrintSums()
              *        may be more free space than 'unsigned long'  *
              *        is able to express.                          */
 
-            PrintNum(NumBuf, TotalSep, "%.0f", Size);
+            PrintNumFixed<0>(NumBuf, TotalSep, Size);
 
-            Gprintf("Free space\1%19s\1 bytes (\1%.1f\1%%)\n",
-                NumBuf,
-                static_cast<double>(tmp.f_bavail) * 100.0
-                / static_cast<double>(tmp.f_blocks));
+            const double free_percent = static_cast<double>(tmp.f_bavail) * 100.0
+                                      / static_cast<double>(tmp.f_blocks);
+#ifdef HAVE_FORMAT
+            Gformat("Free space\1{:>19}\1 bytes (\1{:.1f}\1%)\n",
+                    NumBuf, free_percent);
+#else
+            std::string PercentBuf;
+            PrintNumFixed<1>(PercentBuf, '\0', free_percent);
+            Gprintf("Free space\1%19s\1 bytes (\1%s\1%%)\n",
+                    NumBuf, PercentBuf);
+#endif
         }
 #endif
     }

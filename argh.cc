@@ -24,7 +24,7 @@ void WriteText(std::FILE *stream, std::string_view text)
 #ifdef ColourPrints
     // The legacy colour-aware formatter writes to stdout.
     (void)stream;
-    Gprintf("%s", text);
+    (void)GwriteFormatted(text);
 #elif defined(HAVE_PRINT)
     std::print(stream, "{}", text);
 #else

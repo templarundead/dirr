@@ -1,6 +1,8 @@
 #ifndef bqtEprintfHH
 #define bqtEprintfHH
 
+#include <cstddef>
+#include <limits>
 #include <string_view>
 #include <type_traits>
 #include <ostream>
@@ -52,13 +54,14 @@ class PrintfFormatter
 public:
     struct argsmall
     {
-        unsigned min_width  = 0,     max_width = ~0u;
+        std::size_t min_width = 0;
+        std::size_t max_width = std::numeric_limits<std::size_t>::max();
         bool leftalign      = false, sign      = false, zeropad = false;
         enum basetype   : char { decimal=10, hex=16,  hexup=16+64,  oct=8, bin=2 } base   = decimal;
         enum formattype : char { as_char, as_int, as_float, as_string } format = as_string;
 
         argsmall() { }
-        argsmall(unsigned mi,unsigned ma,bool la, bool si, bool zp, basetype b, formattype f)
+        argsmall(std::size_t mi, std::size_t ma, bool la, bool si, bool zp, basetype b, formattype f)
             : min_width(mi), max_width(ma), leftalign(la), sign(si), zeropad(zp), base(b), format(f) { }
     };
     struct arg: public argsmall
@@ -70,8 +73,8 @@ public:
     struct State
     {
         std::size_t position = 0;
-        unsigned    minwidth = 0;
-        unsigned    maxwidth = 0;
+        std::size_t minwidth = 0;
+        std::size_t maxwidth = 0;
         bool        leftalign = false;
         std::basic_string<char32_t> result{};
     };

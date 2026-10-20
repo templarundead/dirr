@@ -20,7 +20,6 @@
 
 using StatType = struct stat;
 using SizeType = long long;
-inline constexpr std::string_view SizeFormat{"%lld"};
 
 // Accept string-like values and filesystem paths without forcing callers to
 // build a temporary C string themselves.

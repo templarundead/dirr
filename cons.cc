@@ -8,6 +8,9 @@
 using namespace std;
 
 #include <config.h>
+#ifdef HAVE_PRINT
+# include <print>
+#endif
 #include "cons.hh"
 #include "setfun.hh"
 
@@ -352,7 +355,11 @@ int Gputch(int x)
             if(Spaces >= 5 && AnsiOpt && Colors)
             {
                 // TODO: Don't do AnsiOpt if background color changed
+#ifdef HAVE_PRINT
+                std::print(stdout, "\33[{}C", Spaces);
+#else
                 std::printf("\33[%dC", Spaces);
+#endif
                 Spaces = 0;
             }
             else

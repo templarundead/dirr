@@ -107,7 +107,8 @@ P1:
             }
         }
 
-        PrintNum(result, Seps == -1 ? '\0' : static_cast<char>(Seps), SizeFormat, l);
+        // The separator is a single command-line byte; -1 was normalized above.
+        PrintNum(result, Seps == -1 ? '\0' : static_cast<char>(Seps), l);
         result += Suffix;
 
         if(descr != ColorDescr(-1)) descr = ColorDescr::SIZE;

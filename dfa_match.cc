@@ -2,6 +2,7 @@
 
 #define SHARED_PTR_ARRAY
 
+#include <cstddef>
 #include <list>
 #include <array>
 #include <vector>
@@ -78,6 +79,7 @@ static constexpr unsigned DFAOPT_ACCEPT_OFFSET            = 0x80000000u;
 // Character set size.
 static constexpr unsigned CHARSET_SIZE = (1u << CHAR_BIT);
 
+// These return compact 31-bit values for the tagged DFA encoding, not container sizes.
 static unsigned CheckedStateCount(std::size_t count)
 {
     if(count > NFA_ACCEPT_OFFSET)
@@ -225,9 +227,9 @@ class StateMachine
     //typename Alloc::template rebind<unsigned>::other alloc{};
 
     unsigned* data; // [0] = refcount, [1+] = data
-    unsigned nstates;
+    std::size_t nstates;
 public:
-    StateMachine(unsigned n=0) : data{alloc.allocate(1+n*CHARSET_SIZE)}, nstates{n} { *data=1u; }
+    StateMachine(std::size_t n=0) : data{alloc.allocate(1+n*CHARSET_SIZE)}, nstates{n} { *data=1u; }
     StateMachine(const StateMachine& b) : data{},nstates{} { set(b); }
     StateMachine(StateMachine&& b)      : data{},nstates{} { set(std::move(b)); }
     ~StateMachine() { del(); }
@@ -237,9 +239,9 @@ private:
     void del() { if(!--*data) alloc.deallocate(data,1+nstates*CHARSET_SIZE); }
     void set(const StateMachine& b) { data=b.data; nstates=b.nstates; ++*data; }
     void set(StateMachine&& b)      { data=b.data; nstates=b.nstates; *(b.data=alloc.allocate(1))=1u; b.nstates=0; }
-    void setsize(unsigned n) { if(nstates!=n) { del(); data=alloc.allocate(1+n*CHARSET_SIZE); *data=1u; nstates=n; } }
+    void setsize(std::size_t n) { if(nstates!=n) { del(); data=alloc.allocate(1+n*CHARSET_SIZE); *data=1u; nstates=n; } }
 public:
-    unsigned size() const { return nstates; }
+    std::size_t size() const { return nstates; }
     bool empty() const    { return nstates==0; }
     bool operator!=(const StateMachine& b) const { return !operator==(b); }
     bool operator==(const StateMachine& b) const
@@ -256,8 +258,8 @@ public:
     const_iterator cbegin() const { return reinterpret_cast<const elem_t*>(data+1); }
     const_iterator end() const    { return reinterpret_cast<const elem_t*>(data+1+nstates*CHARSET_SIZE); }
     const_iterator cend() const   { return reinterpret_cast<const elem_t*>(data+1+nstates*CHARSET_SIZE); }
-    elem_t&       operator[](unsigned i)       { return *reinterpret_cast<      elem_t*>(data+1+i*CHARSET_SIZE); }
-    const elem_t& operator[](unsigned i) const { return *reinterpret_cast<const elem_t*>(data+1+i*CHARSET_SIZE); }
+    elem_t&       operator[](std::size_t i)       { return *reinterpret_cast<      elem_t*>(data+1+i*CHARSET_SIZE); }
+    const elem_t& operator[](std::size_t i) const { return *reinterpret_cast<const elem_t*>(data+1+i*CHARSET_SIZE); }
 };
 typedef StateMachine<std::allocator<int>> StateMachineType;
 #else
@@ -679,7 +681,7 @@ int DFA_Matcher::Test(std::string_view s, int default_value) const noexcept
     if(unlikely(!data || data->statemachine.empty())) return default_value;
 
     const auto& statemachine = data->statemachine;
-    unsigned cur_state = 0;
+    std::size_t cur_state = 0;
     for(std::size_t a=0, b=s.size(); a<=b; ++a) // Use <= to iterate '\0'.
     {
         // Note: std::string_view is not guaranteed to be nul-terminated.
@@ -690,7 +692,8 @@ int DFA_Matcher::Test(std::string_view s, int default_value) const noexcept
         if(cur_state >= statemachine.size())
         {
             cur_state -= statemachine.size();
-            return cur_state ? cur_state-1 : default_value;
+            // Accepted targets originate as non-negative int values in AddMatch().
+            return cur_state ? static_cast<int>(cur_state - 1) : default_value;
         }
     }
     return default_value;
@@ -874,6 +877,7 @@ private:
     std::vector<bool> deadnodes{};
     RangeSet states{};
 
+    // This returns a 32-bit tagged state ID (high bit denotes an accept), not a size.
     unsigned AddTransition(unsigned root, unsigned newnewnode)
     {
         if(NFA_MINIMIZATION_FLAGS & 0x01)
@@ -1222,6 +1226,7 @@ private:
     // AddSet: Generate a new node from the combination of given nodes
     //         Node numbers may refer to the original map, or to
     //         the new map. New nodes are indicated being offset by new_node_offset.
+    // Results use the same 32-bit tagged state-ID representation as AddTransition.
     unsigned AddSet(std::vector<unsigned>&& targets)
     {
         // targets[] may not be empty.
@@ -1326,17 +1331,18 @@ public:
     {
         for(auto& s: nfa_nodes) for(auto& c: s) c.MakeSureIsSortedAndUnique();
 
-        StateMachineType result(CheckedStateCount(nfa_nodes.size()));
-        for(unsigned n=0; n<nfa_nodes.size(); ++n)
+        const unsigned result_size = CheckedStateCount(nfa_nodes.size());
+        StateMachineType result(result_size);
+        for(unsigned n=0; n<result_size; ++n)
         {
             auto& s = nfa_nodes[n];
             auto& t = result[n];
             for(unsigned c=0; c<CHARSET_SIZE; ++c)
             {
                 assert(s[c].size() <= 1);
-                if(s[c].empty())           { t[c] = result.size(); continue; }
+                if(s[c].empty())           { t[c] = result_size; continue; }
                 unsigned a = s[c].front();
-                if(a >= NFA_ACCEPT_OFFSET) { t[c] = result.size() + 1 + (a - NFA_ACCEPT_OFFSET); }
+                if(a >= NFA_ACCEPT_OFFSET) { t[c] = result_size + 1 + (a - NFA_ACCEPT_OFFSET); }
                 else                       { t[c] = a; }
             }
         }
@@ -1354,7 +1360,7 @@ static void DFA_Transform(StateMachineType& statemachine, bool sort, bool prune)
         unsigned uses=0;
         unsigned originalnumber=0;
     };
-    const unsigned old_num_states = statemachine.size();
+    const unsigned old_num_states = CheckedStateCount(statemachine.size());
     constexpr unsigned unused_flag = ~0u;
     std::unique_ptr<Info[]> info{new Info[old_num_states]};
     unsigned info_size = old_num_states;
@@ -1493,16 +1499,17 @@ static void DFA_Minimize(StateMachineType& statemachine)
     std::vector<group_t> groups(1);
     // Using __gnu_cxx::malloc_allocator<int> or __mt_alloc<int>
     // does not seem to affect performance in any perceptible way.
-    for(unsigned n=0, m=statemachine.size(); n<m; ++n)
+    const unsigned state_count = CheckedStateCount(statemachine.size());
+    for(unsigned n=0; n<state_count; ++n)
         { groups[0].push_back(n); mapping.set(n, 0); }
 
     // Don't create groups for accepting states, since they are
     // not really states, but create a mapping for them, so that
     // we don't need special handling in the group-splitting code.
-    for(unsigned n=0, m=statemachine.size(); n<m; ++n)
+    for(unsigned n=0; n<state_count; ++n)
         for(auto v: statemachine[n])
-            if(v >= m) // Accepting or failing state
-                mapping.set( v, (v - m) + DFAOPT_ACCEPT_OFFSET );
+            if(v >= state_count) // Accepting or failing state
+                mapping.set(v, (v - state_count) + DFAOPT_ACCEPT_OFFSET);
 
 rewritten:;
     for(unsigned groupno=0; groupno<groups.size(); ++groupno)
@@ -1546,8 +1553,9 @@ rewritten:;
     // original state 0, emerges as group 0 in the new ordering.
 
     // Create a new state machine based on these groups
-    StateMachineType newstates(CheckedStateCount(groups.size()));
-    for(unsigned newstateno=0; newstateno<groups.size(); ++newstateno)
+    const unsigned new_state_count = CheckedStateCount(groups.size());
+    StateMachineType newstates(new_state_count);
+    for(unsigned newstateno=0; newstateno<new_state_count; ++newstateno)
     {
         auto& group          = groups[newstateno];
         auto& newstate       = newstates[newstateno];
@@ -1557,9 +1565,9 @@ rewritten:;
         for(unsigned c=0; c<CHARSET_SIZE; ++c)
         {
             unsigned v = oldstate[c];
-            newstate[c] = (v >= statemachine.size()) // Accepting or failing state?
-                            ? (v - statemachine.size() + newstates.size())
-                            : (mapping.get(v)); // group number
+            newstate[c] = (v >= state_count) // Accepting or failing state?
+                            ? (v - state_count + new_state_count)
+                            : mapping.get(v); // group number
         }
     }
     statemachine = std::move(newstates);

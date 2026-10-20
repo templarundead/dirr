@@ -45,6 +45,7 @@ ARCHNAME=dirr-$(VERSION)
 ARCHFILES=main.cc COPYING ChangeLog README README.md dirrsets.hh config.h config.h.in \
           configure config.sub1 config.sub2 config.sub3 \
           CMakeLists.txt .gitignore tests/cli-smoke.sh \
+          tests/dfa-cache-smoke.cc tests/formatting-smoke.cc \
           dfa_match.cc dfa_match.hh \
           colouring.cc colouring.hh \
           getname.cc getname.hh \

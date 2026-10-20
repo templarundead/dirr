@@ -5,6 +5,9 @@
 #include <utility>
 #include "printf.hh"
 #include <config.h>
+#ifdef HAVE_FORMAT
+# include <format>
+#endif
 
 extern bool Colors;
 extern bool AnsiOpt;
@@ -18,6 +21,26 @@ extern void SetAttr(int newattr);
 extern int ColorNums, TextAttr;
 
 enum { DEFAULTATTR = 7 };
+
+// Emit already-formatted text through Gputch, preserving column tracking,
+// paging, and the legacy \1 colour-toggle markers.
+inline std::size_t GwriteFormatted(std::string_view text)
+{
+    int ta = TextAttr, cn = ColorNums >= 0 ? ColorNums : ta;
+    std::size_t n = 0;
+    for(char c: text)
+        if(c != '\1') LIKELY
+        {
+            Gputch(c);
+            ++n;
+        }
+        else
+        {
+            SetAttr(cn);
+            std::swap(ta, cn);
+        }
+    return n;
+}
 
 class GprintfProxy
 {
@@ -40,20 +63,7 @@ public:
     operator std::size_t()
     {
         std::string str = std::move(p).str();
-        int ta = TextAttr, cn = ColorNums >= 0 ? ColorNums : ta;
-        std::size_t n = 0;
-        for(char c: str)
-            if(c != '\1') LIKELY
-            {
-                Gputch(c);
-                ++n;
-            }
-            else
-            {
-                SetAttr(cn);
-                std::swap(ta, cn);
-            }
-        return n;
+        return GwriteFormatted(str);
     }
 };
 
@@ -90,6 +100,13 @@ std::size_t Gprintf(const char (&fmt)[N], Args&&... args)
     return Gprintf(std::string_view(fmt, N-1), std::forward<Args>(args)...);
 }
 
+#ifdef HAVE_FORMAT
+template<typename... Args>
+std::size_t Gformat(std::format_string<Args...> fmt, Args&&... args)
+{
+    return GwriteFormatted(std::format(fmt, std::forward<Args>(args)...));
+}
+#endif
 
 extern std::size_t Gwrite(std::string_view s);
 extern std::size_t Gwrite(std::string_view s, std::size_t pad);
@@ -206,7 +223,9 @@ std::size_t WidthPrintHelper(std::size_t maxlen, std::string_view buf, bool fill
     if(fill && column < maxlen)
     {
         //if(print) fprintf(stderr, "Filled %ld spaces\n", long(maxlen-column));
-        if(print) Gprintf("%*s", maxlen-column, "");
+        if(print)
+            for(std::size_t n = column; n < maxlen; ++n)
+                Gputch(' ');
         column = maxlen;
     }
     return column;

@@ -1,7 +1,5 @@
 #include <config.h>
 
-#include <limits>
-
 #include "getname.hh"
 #include "strfun.hh"
 #include "setfun.hh"
@@ -16,7 +14,7 @@ int Links;
 #endif
 
 std::size_t GetName(std::string fn /* modified, so operate on a copy */,
-                    const StatType &sta, int Space,
+                    const StatType &sta, std::size_t Space,
                     bool Fill, bool nameonly,
                     const char *hardlinkfn)
 {
@@ -27,6 +25,8 @@ std::size_t GetName(std::string fn /* modified, so operate on a copy */,
     StatType HardlinkStat{};
 
     std::size_t Len = 0;
+    std::size_t remaining_space = Space;
+    bool over_budget = false;
     bool estimating = (Space == 0);
     bool maysublink = true;
     bool wasinvalid = false;
@@ -44,29 +44,28 @@ Redo:
         std::size_t width = WidthInColumns(what);
         Len += width;
 
-        const std::size_t space_left = Space > 0 ? static_cast<std::size_t>(Space) : 0;
-        if(width > space_left && nameonly) width = space_left;
+        if(width > remaining_space && nameonly) width = remaining_space;
 
         const std::size_t printed = WidthPrint(width, what, Fill);
-        if(printed > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-            Space = std::numeric_limits<int>::min();
+        if(printed > remaining_space)
+        {
+            remaining_space = 0;
+            over_budget = true;
+        }
         else
         {
-            const int printed_width = static_cast<int>(printed);
-            if(Space < std::numeric_limits<int>::min() + printed_width)
-                Space = std::numeric_limits<int>::min();
-            else
-                Space -= printed_width;
+            remaining_space -= printed;
         }
     };
     auto PutSet = [&](char ch)
     {
         if(estimating)
             ++Len;
-        else if(Space)
+        else if(remaining_space > 0 || over_budget)
         {
             ++Len;
-            if(Space > std::numeric_limits<int>::min()) --Space;
+            if(remaining_space > 0) --remaining_space;
+            else over_budget = true;
             GetModeColor(ColorMode::INFO, ch);
             Gputch(ch);
         }
@@ -92,7 +91,7 @@ Redo:
     {
         if(Links >= 2 && maysublink)
         {
-            if(Space > 0) GetModeColor(ColorMode::INFO, '@');
+            if(remaining_space > 0) GetModeColor(ColorMode::INFO, '@');
             PrintIfRoom(SLinkArrow);
 
             std::string Buf = LinkTarget(fn, true);
@@ -101,15 +100,15 @@ Redo:
             if (auto target = try_stat(Buf); !target) {
                 if (auto link = try_lstat(Buf); !link) {
                     wasinvalid = true;
-                    if (Space > 0) GetModeColor(ColorMode::TYPE, '?');
+                    if (remaining_space > 0) GetModeColor(ColorMode::TYPE, '?');
                 } else {
                     LinkStat = *link;
-                    if (Space > 0) GetModeColor(ColorMode::TYPE, 'l');
+                    if (remaining_space > 0) GetModeColor(ColorMode::TYPE, 'l');
                 }
                 maysublink = false;
             } else {
                 LinkStat = *target;
-                if (Space > 0) {
+                if (remaining_space > 0) {
                     if (auto link = try_lstat(Buf); link && S_ISLNK(link->st_mode))
                         GetModeColor(ColorMode::TYPE, 'l');
                     else
@@ -131,7 +130,7 @@ Redo:
         else if(Stat->st_mode & 00111) PutSet('*'); // Executable by someone
     }
 
-    if(hardlinkfn && Space)
+    if(hardlinkfn && (remaining_space > 0 || over_budget))
     {
         GetModeColor(ColorMode::INFO, '&');
         PrintIfRoom(HLinkArrow);
@@ -150,7 +149,7 @@ Redo:
         goto Redo;
     }
 
-    if(Fill && Space > 0)
-        Gprintf("%*s", Space, "");
+    if(Fill && remaining_space > 0)
+        Gwrite("", remaining_space);
     return Len;
 }
