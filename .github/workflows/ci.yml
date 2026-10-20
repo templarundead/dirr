@@ -53,7 +53,16 @@ jobs:
           fi
 
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          if ctest --test-dir build --output-on-failure > ctest.log 2>&1; then
+            cat ctest.log
+          else
+            status=$?
+            cat ctest.log
+            details=$(tail -n 80 ctest.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g')
+            echo "::error title=CTest failure details::$details"
+            exit "$status"
+          fi
 
   debian-forky-gcc-matrix:
     name: Debian 14 / aarch64 / GCC ${{ matrix.gcc }}.x
