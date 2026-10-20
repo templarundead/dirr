@@ -1,5 +1,6 @@
 #include "printf.hh"
 
+#include <algorithm>
 #include <sstream>
 #include <iomanip>
 #include <limits>
@@ -12,6 +13,8 @@
 
 static const char DigitBufUp[16] = {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'};
 static const char DigitBufLo[16] = {'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};
+
+namespace PrintfPrivate { static void AppendWidthDigit(std::size_t& width, unsigned digit); }
 
 template<std::size_t CharSize>
 static void StringConvert(PrintfFormatter& fmt, const void* data, std::size_t length)
@@ -43,7 +46,7 @@ void PrintfFormatter::MakeFrom(std::basic_string_view<CT> format)
             if(a < format.size() && format[a] == '0') { argument.zeropad   = true; ++a; }
             if(a < format.size() && format[a] == '*') { argument.param_minwidth = true; ++a; }
             else while(a < format.size() && (format[a] >= '0' && format[a] <= '9'))
-                argument.min_width = argument.min_width*10 + (format[a++] - '0');
+                PrintfPrivate::AppendWidthDigit(argument.min_width, static_cast<unsigned>(format[a++] - '0'));
 
             if(a < format.size() && format[a] == '.')
             {
@@ -51,7 +54,7 @@ void PrintfFormatter::MakeFrom(std::basic_string_view<CT> format)
                 if(++a < format.size() && format[a] == '*')
                     { argument.param_maxwidth = true; ++a; }
                 else while(a < format.size() && (format[a] >= '0' && format[a] <= '9'))
-                    argument.max_width = argument.max_width*10 + (format[a++] - '0');
+                    PrintfPrivate::AppendWidthDigit(argument.max_width, static_cast<unsigned>(format[a++] - '0'));
             }
 
        another_formatchar:
@@ -107,7 +110,7 @@ void PrintfFormatter::Execute(PrintfFormatter::State& state)
     for(std::size_t pos = (state.position + 3) / 4; pos < formats.size(); ++pos)
     {
         state.result.append( std::move(formats[pos].before) );
-        state.result.append( (std::size_t) formats[pos].min_width, L' ' );
+        state.result.append( formats[pos].min_width, L' ' );
         formats[pos].before.clear();
     }
     state.result += std::move(trail); trail.clear();
@@ -129,20 +132,33 @@ namespace PrintfPrivate
         return false;
     }
 
-    static unsigned ClampWidth(unsigned long long value)
+    static void AppendWidthDigit(std::size_t& width, unsigned digit)
     {
-        constexpr auto max_width = static_cast<unsigned long long>(
-            std::numeric_limits<unsigned>::max());
-        return value > max_width
-            ? std::numeric_limits<unsigned>::max()
-            : static_cast<unsigned>(value);
+        const auto max_width = std::numeric_limits<std::size_t>::max();
+        if(width > (max_width - digit) / 10)
+            width = max_width;
+        else
+            width = width * 10 + digit;
+    }
+
+    static std::size_t ClampWidth(unsigned long long value)
+    {
+        if constexpr (std::numeric_limits<std::size_t>::digits
+                   < std::numeric_limits<unsigned long long>::digits)
+        {
+            constexpr auto max_width = static_cast<unsigned long long>(
+                std::numeric_limits<std::size_t>::max());
+            if(value > max_width)
+                return std::numeric_limits<std::size_t>::max();
+        }
+        // In the wider-size_t case every unsigned long long value fits.
+        return static_cast<std::size_t>(value);
     }
 
     template<typename T>
     static char32_t ToCharacter(T value)
     {
-        const auto max_value = static_cast<unsigned long long>(
-            std::numeric_limits<char32_t>::max());
+        constexpr unsigned long long max_value = 0x10FFFF; // Maximum Unicode scalar value.
         if constexpr(std::is_floating_point_v<T>)
         {
             const long double numeric = static_cast<long double>(value);
@@ -157,7 +173,11 @@ namespace PrintfPrivate
         }
         else if(static_cast<unsigned long long>(value) > max_value)
             return U'?';
-        return static_cast<char32_t>(value);
+        // Finiteness and Unicode-range checks above make this narrowing safe.
+        const char32_t codepoint = static_cast<char32_t>(value);
+        if(codepoint >= 0xD800 && codepoint <= 0xDFFF)
+            return U'?'; // Surrogates are not Unicode scalar values.
+        return codepoint;
     }
 
     static auto MakeInt(std::string_view part)
@@ -340,7 +360,7 @@ namespace PrintfPrivate
                     if(sign)         digitbuf[--begin] = sign;
 
                     // Process the rest as a string (deals with width)
-                    arg.max_width = ~0u;
+                    arg.max_width = std::numeric_limits<std::size_t>::max();
                     DoString(arg, result, std::basic_string_view<char32_t>(digitbuf+begin, end-begin));
                 }
                 break;
@@ -362,10 +382,16 @@ namespace PrintfPrivate
                     //if(arg.base == PrintfFormatter::arg::hex) s << std::setbase(16);
                     //if(arg.base == PrintfFormatter::arg::oct) s << std::setbase(8);
                     //if(arg.base == PrintfFormatter::arg::bin) s << std::setbase(2);
-                    s << std::setprecision(arg.max_width);
+                    if(arg.max_width != std::numeric_limits<std::size_t>::max())
+                    {
+                        const auto max_precision = static_cast<std::size_t>(std::numeric_limits<int>::max());
+                        // setprecision takes int; clamp the size_t width to that API's range.
+                        const int precision = static_cast<int>(std::min(arg.max_width, max_precision));
+                        s << std::setprecision(precision);
+                    }
                     s << std::fixed;
                     s << part;
-                    arg.max_width = ~0u;
+                    arg.max_width = std::numeric_limits<std::size_t>::max();
 
                     // Use view(), if the STL has support for it
                 #if defined(HAVE_CONCEPTS) && (!defined(__GNUC__) || __GNUC__ >= 10)
@@ -457,7 +483,7 @@ void PrintfFormatter::ExecutePart(PrintfFormatter::State& state, T part) /* Note
                 auto p = MakeInt(std::move(part));
                 // A negative precision means "no precision limit".
                 state.maxwidth = IsNegative(p)
-                    ? std::numeric_limits<unsigned>::max()
+                    ? std::numeric_limits<std::size_t>::max()
                     : ClampWidth(static_cast<unsigned long long>(p));
                 state.position = pos*4 + 2;
                 return;

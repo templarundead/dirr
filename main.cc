@@ -32,6 +32,7 @@ static const char VERSIONSTR[] =
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -376,9 +377,7 @@ static void TellMe(const StatType &Stat, std::string&& Name
                 // Undocumented feature: If fitting is disabled, long pathful filenames are printed
                 bool nameonly = f.info;
                 if(!nameonly && Name.rfind('/')==1 && Name.substr(0,2)=="./") nameonly = true;
-                const auto max_name_space = static_cast<std::size_t>(std::numeric_limits<int>::max());
-                const int name_space = static_cast<int>(std::min(Limits.Name, max_name_space));
-                const auto name_width = GetName(Name, Stat, name_space,
+                const auto name_width = GetName(Name, Stat, Limits.Name,
                                                 MultiColumn || f.info, nameonly, hardlinkfn);
                 ItemLen += std::max(name_width, Limits.Name);
                 break;
@@ -850,7 +849,11 @@ static void SingleFile(string&& Buffer)
     if (!stat_result) {
         const std::error_code error = stat_result.error();
         const std::string message = error.message();
+#ifdef HAVE_FORMAT
+        Gformat("{}: {} ({})\n", Buffer, message, error.value());
+#else
         Gprintf("%s: %s (%d)\n", Buffer, message, error.value());
+#endif
     } else {
         StatType Stat = *stat_result;
         if (PreScan) {
@@ -904,7 +907,11 @@ static void DirChangeCheck(std::string_view Source)
                 Gprintf("\n");
             }
             Eka=0;
+#ifdef HAVE_FORMAT
+            Gformat(" Directory of {}\n", Source.empty() ? std::string_view{"/"} : std::string_view{Source});
+#else
             Gprintf(" Directory of %s\n", Source.empty() ? "/" : Source);
+#endif
         }
         CurrentColumn = 0;
         LastDir = Source;
@@ -960,8 +967,12 @@ static void ScanDir(std::string&& Source) // Directory to list
 
     if(!dir)
     {
+#ifdef HAVE_FORMAT
+        Gformat("\n{} - error: {} ({})\n", Source, errno, GetError(errno));
+#else
         Gprintf("\n%s - error: %d (%s)\n", Source,
                 errno, GetError(errno));
+#endif
         return;
     }
 
@@ -980,8 +991,12 @@ static void ScanDir(std::string&& Source) // Directory to list
     }
 
     if(closedir(dir.release()) != 0)
+#ifdef HAVE_FORMAT
+        Gformat("\nclosedir({}) - error: {} ({})\n", Source, errno, GetError(errno));
+#else
         Gprintf("\nclosedir(%s) - error: %d (%s)\n", Source,
                 errno, GetError(errno));
+#endif
 }
 
 static std::vector<std::string> FilesToList_FromCommandline;

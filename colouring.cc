@@ -6,6 +6,9 @@
 
 #include <array>
 #include <string_view>
+#ifdef HAVE_FORMAT
+# include <format>
+#endif
 
 int GetNameAttr(const StatType& st, std::string_view fn) {
     if (int col = NameColor(fn, -1); col != -1) [[likely]]
@@ -36,8 +39,8 @@ int GetNameAttr(const StatType& st, std::string_view fn) {
     return GetModeColor(ColorMode::TYPE, -'?');
 }
 
-int PrintAttr(const StatType& st, char attrs) {
-    int len = 0;
+std::size_t PrintAttr(const StatType& st, char attrs) {
+    std::size_t len = 0;
 
     // Lambda replaces the old PutSet macro — type-safe, no macro hygiene issues.
     auto put_set = [&](char c) {
@@ -110,10 +113,14 @@ int PrintAttr(const StatType& st, char attrs) {
         }
         default: { // '2'..'9' → octal tail
             GetModeColor(ColorMode::MODE, '#');
+#ifdef HAVE_FORMAT
+            std::string s = std::format("{:032o}", st.st_mode);
+#else
             std::string s = Printf("%032o", st.st_mode);
+#endif
             const std::size_t keep = static_cast<std::size_t>(attrs - '0');
             std::string_view tail = std::string_view(s).substr(s.size() - keep);
-            len += static_cast<int>(Gwrite(tail));
+            len += Gwrite(tail);
             break;
         }
     }
@@ -121,9 +128,9 @@ int PrintAttr(const StatType& st, char attrs) {
 }
 
 #ifdef DJGPP
-int PrintAttr(const StatType& st, char attrs, unsigned dosattr) {
+std::size_t PrintAttr(const StatType& st, char attrs, unsigned dosattr) {
     if (attrs == '0') {
-        int len = 0;
+        std::size_t len = 0;
         auto put_set = [&](char c) { GetModeColor(ColorMode::MODE, c); Gputch(c); ++len; };
         if (dosattr & 0x20) put_set('A'); else put_set('-');
         if (dosattr & 0x02) put_set('H'); else put_set('-');

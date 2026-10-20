@@ -128,8 +128,25 @@ check_cxx_source_compiles("
 if(NOT HAVE_EXPECTED)
     message(FATAL_ERROR "dirr requires a C++23 standard library with std::expected")
 endif()
-# Optional newer library facilities; use std::print when the complete API exists.
-check_include_file_cxx("format" HAVE_FORMAT)
+# Optional newer library facilities. Probe the APIs we actually use rather than
+# only checking that the headers exist (some libstdc++ releases ship partial headers).
+check_cxx_source_compiles("
+    #include <format>
+    #include <string>
+    #include <string_view>
+    #include <utility>
+    template<typename... Args>
+    std::string typed_format(std::format_string<Args...> fmt, Args&&... args) {
+        return std::format(fmt, std::forward<Args>(args)...);
+    }
+    int main() {
+        const std::string owned{\"owned\"};
+        const auto text = typed_format(\"{:04} {} {}\", 42, std::string_view{\"probe\"}, owned);
+        const auto octal = std::format(\"{:032o}\", 7u);
+        const auto fixed = std::format(\"{:.{}f}\", 1.25, 1u);
+        return text.empty() || octal.empty() || fixed.empty();
+    }
+" HAVE_FORMAT)
 check_cxx_source_compiles("
     #include <cstdio>
     #include <print>
@@ -187,6 +204,7 @@ target_compile_options(dirr PRIVATE
         -Wconversion -Wwrite-strings -Wsign-compare -Wredundant-decls
         -Winit-self -Wparentheses -Wcast-align -Wformat
         -Woverloaded-virtual -Wshadow -Wimplicit-fallthrough
+        -Werror
         -funsigned-char
         $<$<BOOL:${DIRR_ENABLE_SANITIZER}>:-fsanitize=address,undefined>
     >
@@ -250,11 +268,35 @@ if(BUILD_TESTING)
     if(Threads_FOUND)
         target_link_libraries(dirr-dfa-cache-smoke PRIVATE Threads::Threads)
     endif()
+    target_compile_options(dirr-dfa-cache-smoke PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:
+            -Wall -Wextra -Wundef -Wconversion -Wsign-compare -Wformat -Werror
+        >
+    )
     if(DIRR_ENABLE_SANITIZER)
         target_compile_options(dirr-dfa-cache-smoke PRIVATE -fsanitize=address,undefined)
         target_link_options(dirr-dfa-cache-smoke PRIVATE -fsanitize=address,undefined)
     endif()
     add_test(NAME dirr-dfa-cache-smoke COMMAND dirr-dfa-cache-smoke)
+
+    add_executable(dirr-formatting-smoke
+        tests/formatting-smoke.cc
+        printf.cc
+    )
+    target_include_directories(dirr-formatting-smoke BEFORE PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_compile_options(dirr-formatting-smoke PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:
+            -Wall -Wextra -Wundef -Wconversion -Wsign-compare -Wformat -Werror
+        >
+    )
+    if(DIRR_ENABLE_SANITIZER)
+        target_compile_options(dirr-formatting-smoke PRIVATE -fsanitize=address,undefined)
+        target_link_options(dirr-formatting-smoke PRIVATE -fsanitize=address,undefined)
+    endif()
+    add_test(NAME dirr-formatting-smoke COMMAND dirr-formatting-smoke)
 
     add_test(NAME dirr-help
         COMMAND dirr --help

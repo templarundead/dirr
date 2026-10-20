@@ -11,7 +11,7 @@ extern int Links;
 
 std::size_t GetName(std::string filename,
                     const StatType& stat,
-                    int space,
+                    std::size_t space,
                     bool fill,
                     bool name_only,
                     const char* hardlink_target);

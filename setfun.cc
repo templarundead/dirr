@@ -5,7 +5,10 @@
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
+#include <cerrno>
+#include <cstddef>
 #include <fstream>
+#include <string_view>
 
 #include <stdlib.h> // For getenv("HOME")
 
@@ -29,6 +32,25 @@
 using std::vector;
 using std::map;
 using std::isxdigit;
+
+#if defined(HAVE_FLOCK) && defined(HAVE_STDIO_FILEBUF)
+static void WriteStderrBestEffort(std::string_view text) noexcept
+{
+    std::size_t position = 0;
+    while(position < text.size())
+    {
+        const ssize_t written = write(STDERR_FILENO, text.data() + position, text.size() - position);
+        if(written < 0)
+        {
+            if(errno == EINTR) continue;
+            return; // Progress output is best-effort and must not interrupt parsing.
+        }
+        if(written == 0) return;
+        // POSIX write returns a positive byte count no greater than the requested size.
+        position += static_cast<std::size_t>(written);
+    }
+}
+#endif
 
 bool Dumping = false; // If 0, save some time
 
@@ -146,14 +168,22 @@ public:
 
             if(i == colors.end() || i->first != Chr)
             {
+#ifdef HAVE_FORMAT
+                Gformat("DIRR_COLORS error: No color for '{}' found in '{}'\n", Chr, ColorModeName(key));
+#else
                 Gprintf("DIRR_COLORS error: No color for '%c' found in '%s'\n", Chr, ColorModeName(key));
+#endif
                 return default_color;
             }
             return i->second;
         }
         else
         {
+#ifdef HAVE_FORMAT
+            Gformat("DIRR_COLORS error: No '{}'\n", ColorModeName(key));
+#else
             Gprintf("DIRR_COLORS error: No '%s'\n", ColorModeName(key));
+#endif
             return default_color;
         }
     }
@@ -169,7 +199,11 @@ public:
         else
         {
         fail:;
+#ifdef HAVE_FORMAT
+            Gformat("DIRR_COLORS error: No '{}'\n", ColorDescrName(key));
+#else
             Gprintf("DIRR_COLORS error: No '%s'\n", ColorDescrName(key));
+#endif
             return default_color;
         }
     }
@@ -271,7 +305,11 @@ private:
                 int m = ColorDescrFromName(s.first);
                 if(m == -1)
                 {
+#ifdef HAVE_FORMAT
+                    Gformat("DIRR_COLORS error: Unknown setting '{}'\n", s.first);
+#else
                     Gprintf("DIRR_COLORS error: Unknown setting '%s'\n", s.first);
+#endif
                     continue;
                 }
                 if(int(descr_sets.size()) <= m) descr_sets.resize(m+1);
@@ -320,35 +358,42 @@ private:
                 int fd = open(hash_save_fn.c_str(), O_WRONLY | O_CREAT, 0644);
                 if(fd >= 0)
                 {
+                    bool filebuf_owns_fd = false;
                 try_relock:;
                     if(flock(fd, LOCK_EX | (num_write_tries==0 ? LOCK_NB : 0)) >= 0)
                     {
                         if(num_write_tries > 0)
                         {
-                            write(2, "\33[K\r", 5);
+                            WriteStderrBestEffort("\33[K\r");
                             close(fd);
                             goto retry_reading;
                         }
                         // libstdc++-only feature: Create an std::ostream using a unix file descriptor.
                         __gnu_cxx::stdio_filebuf<char> buf{fd, std::ios_base::out | std::ios_base::binary};
-                        std::ostream f{&buf};
-                        if(!compiled) { compiled = true; byext_sets.Compile(); }
-                        ftruncate(fd, 0);
-                        byext_sets.Save(f);
-                        close(fd);
-                        break;
+                        filebuf_owns_fd = buf.is_open();
+                        if(filebuf_owns_fd)
+                        {
+                            std::ostream f{&buf};
+                            if(!compiled) { compiled = true; byext_sets.Compile(); }
+                            if(ftruncate(fd, 0) == 0)
+                            {
+                                byext_sets.Save(f);
+                                break;
+                            }
+                            // Fall back to std::ofstream below if truncation fails.
+                        }
                     }
                     else if(errno == EINTR) goto try_relock;
                     else if(errno == EWOULDBLOCK)
                     {
                         std::string msg = "File " + hash_save_fn + " is locked, waiting...\r";
-                        write(2, msg.c_str(), msg.size());
+                        WriteStderrBestEffort(msg);
 
                         close(fd);
                         ++num_write_tries;
                         goto retry_reading;
                     }
-                    close(fd);
+                    if(!filebuf_owns_fd) close(fd);
                 }
             #endif
                 std::ofstream f(hash_save_fn, std::ios_base::out | std::ios_base::binary);
@@ -433,7 +478,11 @@ void PrintSettings()
     for(unsigned m=0; m<Settings.mode_sets.size(); ++m)
     {
         SetAttr(Dfl);
+#ifdef HAVE_FORMAT
+        Gformat("{}{}(", indent, ColorModeName(ColorMode(m)));
+#else
         Gprintf("%s%s(", indent, ColorModeName(ColorMode(m)));
+#endif
         bool sep = false;
         for(const auto& c: Settings.mode_sets[m])
         {
@@ -449,7 +498,11 @@ void PrintSettings()
     for(unsigned m=0; m<Settings.descr_sets.size(); ++m)
     {
         SetAttr(Dfl);
+#ifdef HAVE_FORMAT
+        Gformat("{}{}(", indent, ColorDescrName(ColorDescr(m)));
+#else
         Gprintf("%s%s(", indent, ColorDescrName(ColorDescr(m)));
+#endif
         const auto& table = Settings.descr_sets[m];
         for(std::size_t a=0; a<table.size(); ++a)
         {
@@ -467,7 +520,11 @@ void PrintSettings()
         while(pair.first != pair.second)
         {
             SetAttr(Dfl);
+#ifdef HAVE_FORMAT
+            Gformat("{}byext(", indent);
+#else
             Gprintf("%sbyext(", indent);
+#endif
             const std::string& t = pair.first++->second;
 
             int color = -1;
@@ -488,7 +545,11 @@ void PrintSettings()
                     pos = spacepos;
                     continue;
                 }
+#ifdef HAVE_FORMAT
+                Gformat(" {}", token);
+#else
                 Gprintf(" %s", token);
+#endif
                 pos = spacepos;
             }
             SetAttr(Dfl);
