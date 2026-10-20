@@ -48,6 +48,12 @@ jobs:
           if cmake --build build --parallel 2 > build.log 2>&1; then
             tail -n 20 build.log
           else
+            diagnostics=$(grep -E -A 2 -B 1 -m 5 'error:|fatal error:|undefined reference|Error [0-9]+' build.log | head -n 40 || true)
+            if [[ -z "$diagnostics" ]]; then
+              diagnostics=$(tail -n 20 build.log)
+            fi
+            details=$(printf '%s' "$diagnostics" | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g')
+            echo "::error title=GCC build diagnostics::$details"
             tail -n 60 build.log
             exit 1
           fi
