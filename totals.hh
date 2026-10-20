@@ -22,7 +22,7 @@ extern std::array<SizeType, SumMax> SumCnt;
 extern std::array<SizeType, SumMax> SumSizes;
 
 extern bool Totals;
-extern int  TotalSep;
+extern char TotalSep;
 extern int  Compact;
 extern std::string LastDir;
 

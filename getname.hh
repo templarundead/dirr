@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 #include "stat.h"
@@ -8,9 +9,9 @@
 extern int Links;
 #endif
 
-int GetName(std::string filename,
-              const StatType& stat,
-              int space,
-              bool fill,
-              bool name_only,
-              const char* hardlink_target);
+std::size_t GetName(std::string filename,
+                    const StatType& stat,
+                    int space,
+                    bool fill,
+                    bool name_only,
+                    const char* hardlink_target);

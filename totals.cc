@@ -24,7 +24,7 @@ std::array<SizeType, SumMax> SumSizes{};
 std::string LastDir;
 
 bool Totals;
-int TotalSep;
+char TotalSep;
 int Compact;
 
 void PrintSums()
@@ -33,11 +33,11 @@ void PrintSums()
 #if defined(SUNOS)||defined(__sun)||defined(SOLARIS)
 #define STATFS(mountpoint, structp) statvfs(mountpoint, structp)
 #define STATFST statvfs
-#define STATFREEKB(tmp) ((tmp).f_bavail / 1024.0 * (tmp).f_frsize)
+#define STATFREEKB(tmp) (static_cast<double>((tmp).f_bavail) / 1024.0 * static_cast<double>((tmp).f_frsize))
 #else
 #define STATFS(mountpoint, structp) statfs(mountpoint, structp)
 #define STATFST statfs
-#define STATFREEKB(tmp) ((tmp).f_bavail / 1024.0 * (tmp).f_bsize)
+#define STATFREEKB(tmp) (static_cast<double>((tmp).f_bavail) / 1024.0 * static_cast<double>((tmp).f_bsize))
 #endif
     struct STATFST tmp;
 #endif
@@ -135,7 +135,8 @@ void PrintSums()
             }
 
             Gprintf(" free(\1%.1f\1%%)",
-                (double)tmp.f_bavail * 100.0 / tmp.f_blocks);
+                static_cast<double>(tmp.f_bavail) * 100.0
+                / static_cast<double>(tmp.f_blocks));
         }
 #endif
         Gprintf("\n");
@@ -213,7 +214,8 @@ void PrintSums()
 
             Gprintf("Free space\1%19s\1 bytes (\1%.1f\1%%)\n",
                 NumBuf,
-                (double)((double)tmp.f_bavail * 100.0 / tmp.f_blocks));
+                static_cast<double>(tmp.f_bavail) * 100.0
+                / static_cast<double>(tmp.f_blocks));
         }
 #endif
     }

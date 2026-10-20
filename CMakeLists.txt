@@ -128,9 +128,17 @@ check_cxx_source_compiles("
 if(NOT HAVE_EXPECTED)
     message(FATAL_ERROR "dirr requires a C++23 standard library with std::expected")
 endif()
-# Optional newer library facilities; not required by current custom formatter.
+# Optional newer library facilities; use std::print when the complete API exists.
 check_include_file_cxx("format" HAVE_FORMAT)
-check_include_file_cxx("print" HAVE_PRINT)
+check_cxx_source_compiles("
+    #include <cstdio>
+    #include <print>
+    #include <string_view>
+    int main() {
+        std::print(stdout, \"{}\", std::string_view{\"probe\"});
+    }
+" HAVE_STD_PRINT)
+set(HAVE_PRINT ${HAVE_STD_PRINT})
 check_include_file_cxx("filesystem" HAVE_FILESYSTEM)
 if(NOT HAVE_FILESYSTEM)
     message(FATAL_ERROR "dirr requires <filesystem>")
@@ -230,6 +238,24 @@ install(TARGETS dirr
 # ─────────────────────────────────────────────────────────────────────
 if(BUILD_TESTING)
     enable_testing()
+
+    add_executable(dirr-dfa-cache-smoke
+        tests/dfa-cache-smoke.cc
+        dfa_match.cc
+    )
+    target_include_directories(dirr-dfa-cache-smoke BEFORE PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    if(Threads_FOUND)
+        target_link_libraries(dirr-dfa-cache-smoke PRIVATE Threads::Threads)
+    endif()
+    if(DIRR_ENABLE_SANITIZER)
+        target_compile_options(dirr-dfa-cache-smoke PRIVATE -fsanitize=address,undefined)
+        target_link_options(dirr-dfa-cache-smoke PRIVATE -fsanitize=address,undefined)
+    endif()
+    add_test(NAME dirr-dfa-cache-smoke COMMAND dirr-dfa-cache-smoke)
+
     add_test(NAME dirr-help
         COMMAND dirr --help
     )

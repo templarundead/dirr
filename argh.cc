@@ -1,20 +1,53 @@
+#include <config.h>
+
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 
 #include "argh.hh"
 
 #ifdef ColourPrints
 # include "cons.hh"
-# define GPRINTF_ARGS
 #else
-# include <cstdio>
-# define GPRINTF_ARGS stderr,
-# define Gputch(x) putc((x), stderr)
-# define Gprintf fprintf
-# define SetAttr(x)
+# ifdef HAVE_PRINT
+#  include <print>
+# endif
 #endif
 
 /* This file is part of Bisqwit's dirr and remotegcc packages. */
+
+namespace
+{
+void WriteText(std::FILE *stream, std::string_view text)
+{
+#ifdef ColourPrints
+    // The legacy colour-aware formatter writes to stdout.
+    (void)stream;
+    Gprintf("%s", text);
+#elif defined(HAVE_PRINT)
+    std::print(stream, "{}", text);
+#else
+    (void)std::fwrite(text.data(), 1, text.size(), stream);
+#endif
+}
+
+void SetTextAttr(int attr)
+{
+#ifdef ColourPrints
+    SetAttr(attr);
+#else
+    (void)attr;
+#endif
+}
+
+void ResetTextAttr()
+{
+#ifdef ColourPrints
+    SetAttr(DEFAULTATTR);
+#endif
+}
+}
 
 arghandler::arghandler(const char *defopts, int argc, const char *const *argv)
 {
@@ -96,7 +129,7 @@ void arghandler::parse()
                 for(auto& o: options)
                     if(o.Long && s == o.Long)
                     {
-                        unsigned c = a+1;
+                        std::size_t c = a+1;
                         if(c == b) --c; // Don't access out of bounds
                         s = args[c];
                         s = o.handler->CallBack(this, s);
@@ -152,75 +185,83 @@ void arghandler::parse()
 
 void arghandler::argerror(char c)
 {
-    Gprintf(GPRINTF_ARGS "%s: illegal option -- %c\n", a0, c);
+    std::string message = a0 + ": illegal option -- ";
+    message.push_back(c);
+    message.push_back('\n');
+    WriteText(stderr, message);
     suggesthelp();
     exit(1);
 }
 
 void arghandler::argerror(const std::string &s, bool param)
 {
-    Gprintf(GPRINTF_ARGS "%s: %s%s'\n",
-        a0,
-        param ? "invalid parameter `" : "unrecognized option `--",
-        s);
+    std::string message = a0 + ": ";
+    message += param ? "invalid parameter `" : "unrecognized option `--";
+    message += s;
+    message += "'\n";
+    WriteText(stderr, message);
     if(!param) suggesthelp();
     exit(1);
 }
 
 void arghandler::suggesthelp()
 {
-    Gprintf(GPRINTF_ARGS "Try `%s --help' for more information.\n", a0);
+    WriteText(stderr, "Try `" + a0 + " --help' for more information.\n");
 }
 
 void arghandler::listoptions()
 {
-    unsigned longestshort=0, longestlong=0;
+    std::size_t longestshort=0, longestlong=0;
     for(auto& o: options)
     {
-        unsigned slen = std::strlen(o.Short);
+        std::size_t slen = std::strlen(o.Short);
         if(slen > longestshort) longestshort = slen;
-        unsigned llen = std::strlen(o.Long);
+        std::size_t llen = std::strlen(o.Long);
         if(llen > longestlong) longestlong = llen;
     }
-    unsigned space = longestshort + longestlong+1;
+    const std::size_t space = longestshort + longestlong + 1;
     for(auto& o: options)
     {
         const char *s = o.Short;
         const char *l = o.Long;
 
-        SetAttr(*s ? 3 : 0);
-        Gprintf(GPRINTF_ARGS "  -");
-        SetAttr(DEFAULTATTR);
-        Gprintf(GPRINTF_ARGS "%s", s);
+        SetTextAttr(*s ? 3 : 0);
+        WriteText(stdout, "  -");
+        ResetTextAttr();
+        WriteText(stdout, s);
 
-        SetAttr(*l ? 3 : 0);
-        Gprintf(GPRINTF_ARGS ", --");
-        SetAttr(DEFAULTATTR);
-        Gprintf(GPRINTF_ARGS "%s", l);
+        SetTextAttr(*l ? 3 : 0);
+        WriteText(stdout, ", --");
+        ResetTextAttr();
+        WriteText(stdout, l);
 
-        Gprintf(GPRINTF_ARGS "%*s", space-(std::strlen(s) + std::strlen(l)), "");
+        const std::size_t names_length = std::strlen(s) + std::strlen(l);
+        WriteText(stdout, std::string(space - names_length, ' '));
 
-        SetAttr(DEFAULTATTR);
+        ResetTextAttr();
 
         const char *q = o.Descr.c_str();
+        std::string description;
         bool needspace = false;
         bool needeol = true;
         for(; *q; ++q)
         {
             if(needspace)
             {
-                Gprintf(GPRINTF_ARGS "\n%*s", space+7, "");
+                description.push_back('\n');
+                description.append(space + 7, ' ');
                 needspace = false;
             }
             needeol = true;
             if(*q != '\n')
             {
-                Gputch(*q);
+                description.push_back(*q);
                 continue;
             }
             needspace = true;
             needeol = false;
         }
-        if(needspace || needeol)Gprintf(GPRINTF_ARGS "\n");
+        if(needspace || needeol) description.push_back('\n');
+        WriteText(stdout, description);
     }
 }

@@ -29,7 +29,7 @@ static bool LinkFormatStatsOfTarget()
     return Links==3 || Links==5;
 }
 
-std::string GetSize(const std::string &s, const StatType &Sta, int Space, int Seps)
+std::string GetSize(const std::string &s, const StatType &Sta, std::size_t Space, int Seps)
 {
     const StatType *Stat = &Sta;
 #ifdef S_ISLNK
@@ -107,7 +107,7 @@ P1:
             }
         }
 
-        PrintNum(result, Seps == -1 ? '\0' : Seps, SizeFormat, l);
+        PrintNum(result, Seps == -1 ? '\0' : static_cast<char>(Seps), SizeFormat, l);
         result += Suffix;
 
         if(descr != ColorDescr(-1)) descr = ColorDescr::SIZE;
@@ -118,7 +118,7 @@ P1:
     else
         GetModeColor(ColorMode::INFO, '@');
 
-    if(int(result.size()) < Space)
+    if(result.size() < Space)
         result.insert(0, Space-result.size(), ' ');
 
     return result;
