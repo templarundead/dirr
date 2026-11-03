@@ -981,9 +981,15 @@ static void ScanDir(std::string&& Source) // Directory to list
     {
         if(!ShowDotFiles && ent->d_name[0] == '.') continue;
 
-        std::string Buffer = Source;
-        if(Buffer.back() != '/') Buffer += '/';
-        Buffer += ent->d_name;
+        const bool need_separator = Source.empty() || Source.back() != '/';
+        const std::size_t separator_size = need_separator ? std::size_t{1} : std::size_t{0};
+        const std::size_t name_size = std::strlen(ent->d_name);
+        std::string Buffer;
+        // Source and d_name are byte strings; reserve the exact joined byte length.
+        Buffer.reserve(Source.size() + separator_size + name_size);
+        Buffer = Source;
+        if(need_separator) Buffer += '/';
+        Buffer.append(ent->d_name, name_size);
 
         SingleFile(std::move(Buffer));
     }

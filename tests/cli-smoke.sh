@@ -9,6 +9,13 @@ trap 'rm -rf "$work" "$logs"' EXIT HUP INT TERM
 : > "$work/visible.txt"
 : > "$work/.hidden"
 mkdir "$work/subdir"
+utf8_name=$(printf 'utf8-\303\251.txt')
+: > "$work/$utf8_name"
+invalid_name=$(printf 'invalid-\377-name')
+: > "$work/$invalid_name"
+long_name=$(printf '%*s' 240 '' | tr ' ' L)
+: > "$work/$long_name"
+ln "$work/visible.txt" "$work/hardlink.txt"
 ln -s visible.txt "$work/link"
 
 # Help text, including the option list, belongs entirely on stdout.
@@ -109,3 +116,21 @@ actual=$("$binary" -c -m2 -X80 --format=.a9 "$mode_file")
 chmod 1751 "$mode_file"
 actual=$("$binary" -c -m2 -X80 --format=.a9 "$mode_file")
 [ "$actual" = "000101751" ] || { echo "sticky mode was '$actual'" >&2; exit 1; }
+
+# Empty operands, trailing separators, and long directory prefixes must not
+# produce invalid path-buffer accesses or lose directory entries.
+empty_operand=$("$binary" -m2 -c -X80 "")
+[ -n "$empty_operand" ] || { echo 'empty operand produced no diagnostic' >&2; exit 1; }
+trailing_listing=$("$binary" -m2 -c -X80 --format=.f "$work/")
+printf '%s' "$trailing_listing" | grep -Fq 'visible.txt'
+
+long_dir="$work/long"
+mkdir "$long_dir"
+segment=$(printf '%*s' 170 '' | tr ' ' x)
+for index in 1 2 3 4; do
+    long_dir="$long_dir/$segment"
+    mkdir "$long_dir"
+done
+: > "$long_dir/deep-file.txt"
+deep_listing=$("$binary" -m2 -c -X80 --format=.f "$long_dir")
+printf '%s' "$deep_listing" | grep -Fq 'deep-file.txt'
