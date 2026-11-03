@@ -298,6 +298,22 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME dirr-formatting-smoke COMMAND dirr-formatting-smoke)
 
+    add_executable(dirr-stat-path-smoke tests/stat-path-smoke.cc)
+    target_include_directories(dirr-stat-path-smoke BEFORE PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_compile_options(dirr-stat-path-smoke PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:
+            -Wall -Wextra -Wundef -Wconversion -Wsign-compare -Wformat -Werror
+        >
+    )
+    if(DIRR_ENABLE_SANITIZER)
+        target_compile_options(dirr-stat-path-smoke PRIVATE -fsanitize=address,undefined)
+        target_link_options(dirr-stat-path-smoke PRIVATE -fsanitize=address,undefined)
+    endif()
+    add_test(NAME dirr-stat-path-smoke COMMAND dirr-stat-path-smoke)
+
     add_test(NAME dirr-help
         COMMAND dirr --help
     )
