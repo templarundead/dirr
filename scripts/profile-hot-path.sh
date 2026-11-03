@@ -109,9 +109,13 @@ run_strace() {
     err="$OUT/strace-${label}-l0.stderr"
     if ! command -v strace >/dev/null 2>&1; then
         record "strace ${label}: NOT RUN (strace not installed)"
-    elif strace -c -e trace=%stat -o "$log" -- \
+    elif strace -c -e trace=%file,getdents64 -o "$log" -- \
             "$bin" -l0 -A -c -X80 "$LINKS" >/dev/null 2>"$err"; then
-        record "strace ${label}: PASS; see $log"
+        if [[ -s "$log" ]]; then
+            record "strace ${label}: PASS; see $log"
+        else
+            record "strace ${label}: NOT RUN/FAILED (empty syscall summary); see $err"
+        fi
     else
         record "strace ${label}: NOT RUN (ptrace/filter error); see $err"
     fi
