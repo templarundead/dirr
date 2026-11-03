@@ -117,16 +117,29 @@ run_strace() {
 }
 
 run_heaptrack() {
-    local label=$1 bin=$2 profile log
-    profile="$OUT/heaptrack-${label}-l0.gz"
+    local label=$1 bin=$2 output_base log profile
+    output_base="$OUT/heaptrack-${label}-l0"
     log="$OUT/heaptrack-${label}-l0.log"
     if ! command -v heaptrack >/dev/null 2>&1; then
         record "heaptrack ${label}: NOT RUN (heaptrack not installed)"
-    elif heaptrack --output "$profile" -- "$bin" -l0 -A -c -X80 "$LINKS" \
-            >/dev/null 2>"$log"; then
-        record "heaptrack ${label}: PASS; see $profile and $log"
     else
-        record "heaptrack ${label}: NOT RUN/FAILED; see $log"
+        # Heaptrack appends its own .gz or .zst suffix to --output.
+        rm -f -- "${output_base}.gz" "${output_base}.zst" "$log"
+        record "heaptrack ${label}: starting -l0; diagnostics: $log"
+        if heaptrack --output "$output_base" -- "$bin" -l0 -A -c -X80 "$LINKS" \
+                >/dev/null 2>"$log"; then
+            if [[ -s "${output_base}.gz" ]]; then
+                profile="${output_base}.gz"
+            elif [[ -s "${output_base}.zst" ]]; then
+                profile="${output_base}.zst"
+            else
+                record "heaptrack ${label}: NOT RUN/FAILED (no non-empty profile); see $log"
+                return
+            fi
+            record "heaptrack ${label}: PASS; see $profile and $log"
+        else
+            record "heaptrack ${label}: NOT RUN/FAILED; see $log"
+        fi
     fi
 }
 
