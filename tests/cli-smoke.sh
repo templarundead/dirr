@@ -67,9 +67,16 @@ printf '%s' "$all" | grep -Fq '.hidden'
 file=$("$binary" -c --format=.f "$work/visible.txt")
 printf '%s' "$file" | grep -Fq 'visible.txt'
 
-# -l0 follows the symbolic link and exercises the stat() expected wrapper.
-link=$("$binary" -l0 -c --format=.f "$work/link")
-printf '%s' "$link" | grep -Fq 'link'
+# -l0 follows the symbolic link, showing the target's size rather than the
+# symlink's own length, and exercises the stat() expected wrapper.
+link=$("$binary" -l0 -c --format=.f_.s "$work/link")
+printf '%s' "$link" | grep -Fq 'link 0'
+
+# The aliases a2/a3 also select Links == 0 while scanning directory entries.
+for alias in 2 3; do
+    listing=$("$binary" "-a$alias" -c -X80 "$work")
+    printf '%s' "$listing" | grep -Fq 'link'
+done
 
 # -l3 resolves and displays a relative symlink target in the file's directory.
 link_stats=$("$binary" -l3 -c --format=.f_.s "$work/link")

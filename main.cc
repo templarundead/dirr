@@ -828,10 +828,6 @@ static void PrintAllFilesCollectedSoFar()
 
 static void SingleFile(string&& Buffer)
 {
-    #ifndef S_ISLNK
-    int Links=0;
-    #endif
-
     #ifdef DJGPP
     struct ffblk Bla;
     if(findfirst(Buffer.c_str(), &Bla, 0x37))
@@ -841,10 +837,12 @@ static void SingleFile(string&& Buffer)
     }
     #endif
 
-    auto stat_result = try_lstat_path(Buffer);
 #ifdef S_ISLNK
-    if (!Links)
-        stat_result = try_stat_path(Buffer);
+    auto stat_result = Links == 0
+        ? try_stat_path(Buffer)
+        : try_lstat_path(Buffer);
+#else
+    auto stat_result = try_lstat_path(Buffer);
 #endif
     if (!stat_result) {
         const std::error_code error = stat_result.error();
