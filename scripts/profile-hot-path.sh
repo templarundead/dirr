@@ -49,7 +49,8 @@ record() {
     printf '%s\n' "$*" | tee -a "$SUMMARY"
 }
 
-unset DIRR_COLORS || true
+# Ignore per-user dirr defaults so every profiled invocation has the same options.
+unset DIRR DIRR_COLORS || true
 export LC_ALL=C TZ=UTC COLS=80 COLUMNS=80
 
 FIXTURE=$(mktemp -d "${TMPDIR:-/tmp}/dirr-profile-fixture.XXXXXX") || exit 2
@@ -116,12 +117,31 @@ run_strace() {
     fi
 }
 
+is_dynamically_linked() {
+    local bin=$1 program_headers ldd_output
+    if command -v readelf >/dev/null 2>&1; then
+        if program_headers=$(readelf -l "$bin" 2>/dev/null); then
+            [[ $program_headers == *INTERP* ]]
+            return
+        fi
+    fi
+    if command -v ldd >/dev/null 2>&1; then
+        ldd_output=$(ldd "$bin" 2>&1 || true)
+        [[ $ldd_output != *"not a dynamic executable"* && $ldd_output != *"statically linked"* ]]
+        return
+    fi
+    # If no ELF inspection tool is available, attempt Heaptrack and report its result.
+    return 0
+}
+
 run_heaptrack() {
     local label=$1 bin=$2 output_base log profile
     output_base="$OUT/heaptrack-${label}-l0"
     log="$OUT/heaptrack-${label}-l0.log"
     if ! command -v heaptrack >/dev/null 2>&1; then
         record "heaptrack ${label}: NOT RUN (heaptrack not installed)"
+    elif ! is_dynamically_linked "$bin"; then
+        record "heaptrack ${label}: NOT RUN (static binary; Heaptrack requires LD_PRELOAD)"
     else
         # Heaptrack appends its own .gz or .zst suffix to --output.
         rm -f -- "${output_base}.gz" "${output_base}.zst" "$log"
