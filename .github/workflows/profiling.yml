@@ -1,0 +1,95 @@
+name: Hot-path profiling
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  profile:
+    name: Profilers (informational)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    # Runner perf_event/ptrace permissions vary; this report must not block CI.
+    continue-on-error: true
+    steps:
+      - name: Check out PR base
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out PR head
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: draft
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install build and profiling tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake g++ make
+          for package in hyperfine heaptrack strace; do
+            if ! command -v "$package" >/dev/null 2>&1; then
+              sudo apt-get install -y --no-install-recommends "$package" \
+                || echo "::warning::Could not install $package; its profile will be NOT RUN"
+            fi
+          done
+          if ! command -v perf >/dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends linux-tools-common linux-tools-generic \
+              || echo '::warning::Could not install perf; perf stat will be NOT RUN'
+          fi
+          g++ --version | head -n 1
+          cmake --version | head -n 1
+          uname -a
+
+      - name: Configure and build baseline and PR head identically
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S baseline -B "$RUNNER_TEMP/dirr-baseline-build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDIRR_ENABLE_LTO=ON \
+            -DDIRR_ENABLE_SANITIZER=OFF \
+            -DDIRR_STATIC=OFF
+          cmake --build "$RUNNER_TEMP/dirr-baseline-build" --target dirr --parallel 2
+          cmake -S draft -B "$RUNNER_TEMP/dirr-draft-build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDIRR_ENABLE_LTO=ON \
+            -DDIRR_ENABLE_SANITIZER=OFF \
+            -DDIRR_STATIC=OFF
+          cmake --build "$RUNNER_TEMP/dirr-draft-build" --target dirr --parallel 2
+          printf 'baseline SHA: '; git -C baseline rev-parse HEAD
+          printf 'draft SHA:    '; git -C draft rev-parse HEAD
+
+      - name: Run hyperfine, perf, heaptrack, and strace probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dirr-profile-results"
+          draft/scripts/profile-hot-path.sh \
+            "$RUNNER_TEMP/dirr-baseline-build/dirr" \
+            "$RUNNER_TEMP/dirr-draft-build/dirr" \
+            "$RUNNER_TEMP/dirr-profile-results"
+
+      - name: Upload profiling reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hot-path-profiling-${{ github.event.pull_request.number }}
+          path: ${{ runner.temp }}/dirr-profile-results/
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 0
