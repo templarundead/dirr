@@ -83,3 +83,29 @@ link_stats=$("$binary" -l3 -c --format=.f_.s "$work/link")
 printf '%s' "$link_stats" | grep -Fq 'link ->'
 printf '%s' "$link_stats" | grep -Fq 'visible.txt'
 printf '%s' "$link_stats" | grep -Fq '0'
+
+# The octal attribute field keeps the legacy 32-column zero padding and takes
+# the requested two through nine trailing digits.
+mode_file="$work/mode-file"
+: > "$mode_file"
+chmod 0644 "$mode_file"
+attrs=2
+for expected in 44 644 0644 00644 100644 0100644 00100644 000100644; do
+    actual=$("$binary" -c -m2 -X80 "--format=.a$attrs" "$mode_file")
+    if [ "$actual" != "$expected" ]; then
+        echo ".a$attrs produced '$actual', expected '$expected'" >&2
+        exit 1
+    fi
+    attrs=$((attrs + 1))
+done
+
+# Special mode bits remain part of the printed octal mode.
+chmod 4751 "$mode_file"
+actual=$("$binary" -c -m2 -X80 --format=.a9 "$mode_file")
+[ "$actual" = "000104751" ] || { echo "setuid mode was '$actual'" >&2; exit 1; }
+chmod 2751 "$mode_file"
+actual=$("$binary" -c -m2 -X80 --format=.a9 "$mode_file")
+[ "$actual" = "000102751" ] || { echo "setgid mode was '$actual'" >&2; exit 1; }
+chmod 1751 "$mode_file"
+actual=$("$binary" -c -m2 -X80 --format=.a9 "$mode_file")
+[ "$actual" = "000101751" ] || { echo "sticky mode was '$actual'" >&2; exit 1; }

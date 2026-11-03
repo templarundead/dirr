@@ -6,6 +6,9 @@
 
 #include <array>
 #include <string_view>
+#ifdef HAVE_CHARCONV
+# include <charconv>
+#endif
 #ifdef HAVE_FORMAT
 # include <format>
 #endif
@@ -113,10 +116,30 @@ std::size_t PrintAttr(const StatType& st, char attrs) {
         }
         default: { // '2'..'9' → octal tail
             GetModeColor(ColorMode::MODE, '#');
+            std::string s;
+#ifdef HAVE_CHARCONV
+            std::array<char, 64> octal_buffer{};
+            const auto converted = std::to_chars(
+                octal_buffer.data(), octal_buffer.data() + octal_buffer.size(), st.st_mode, 8);
+            if (converted.ec == std::errc{}) {
+                // to_chars returns an end pointer inside the buffer; its distance fits size_t.
+                const std::size_t digits = static_cast<std::size_t>(converted.ptr - octal_buffer.data());
+                constexpr std::size_t minimum_width = 32;
+                if (digits < minimum_width) s.assign(minimum_width - digits, '0');
+                s.append(octal_buffer.data(), digits);
+            } else {
 #ifdef HAVE_FORMAT
-            std::string s = std::format("{:032o}", st.st_mode);
+                s = std::format("{:032o}", st.st_mode);
 #else
-            std::string s = Printf("%032o", st.st_mode);
+                s = Printf("%032o", st.st_mode);
+#endif
+            }
+#else
+#ifdef HAVE_FORMAT
+            s = std::format("{:032o}", st.st_mode);
+#else
+            s = Printf("%032o", st.st_mode);
+#endif
 #endif
             const std::size_t keep = static_cast<std::size_t>(attrs - '0');
             std::string_view tail = std::string_view(s).substr(s.size() - keep);
