@@ -13,6 +13,17 @@ int main()
     PrintNum(text, ',', -1234LL);
     if(text != "-1,234") return 2;
 
+    PrintNum(text, '\0', 0LL);
+    if(text != "0") return 13;
+    PrintNum(text, '\0', 999LL);
+    if(text != "999") return 14;
+    PrintNum(text, '\'', 1000LL);
+    if(text != "1'000") return 15;
+    PrintNum(text, '\'', std::numeric_limits<long long>::min());
+    if(text != "-9'223'372'036'854'775'808") return 16;
+    PrintNum(text, '\'', std::numeric_limits<long long>::max());
+    if(text != "9'223'372'036'854'775'807") return 17;
+
     PrintNumFixed<1>(text, '\0', 1234.5);
     if(text != "1234.5") return 3;
     PrintNumFixed<0>(text, '\0', 1234.6);

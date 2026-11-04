@@ -28,37 +28,57 @@ concept StatPath = std::convertible_to<T, std::string_view>
                 || std::same_as<std::remove_cvref_t<T>, std::filesystem::path>;
 
 [[nodiscard]] inline std::expected<StatType, std::error_code>
-try_stat(std::string_view path) {
-    const std::string native_path{path};
+try_stat(const char* path) {
     StatType metadata{};
-    if (::stat(native_path.c_str(), &metadata) == 0)
+    if (::stat(path, &metadata) == 0)
         return metadata;
     return std::unexpected(std::error_code(errno, std::generic_category()));
 }
 
 [[nodiscard]] inline std::expected<StatType, std::error_code>
-try_lstat(std::string_view path) {
+try_stat(const std::string& path) {
+    return try_stat(path.c_str());
+}
+
+[[nodiscard]] inline std::expected<StatType, std::error_code>
+try_stat(std::string_view path) {
     const std::string native_path{path};
+    return try_stat(native_path.c_str());
+}
+
+[[nodiscard]] inline std::expected<StatType, std::error_code>
+try_lstat(const char* path) {
     StatType metadata{};
-    if (::lstat(native_path.c_str(), &metadata) == 0)
+    if (::lstat(path, &metadata) == 0)
         return metadata;
     return std::unexpected(std::error_code(errno, std::generic_category()));
+}
+
+[[nodiscard]] inline std::expected<StatType, std::error_code>
+try_lstat(const std::string& path) {
+    return try_lstat(path.c_str());
+}
+
+[[nodiscard]] inline std::expected<StatType, std::error_code>
+try_lstat(std::string_view path) {
+    const std::string native_path{path};
+    return try_lstat(native_path.c_str());
 }
 
 template<StatPath Path>
 [[nodiscard]] inline std::expected<StatType, std::error_code>
 try_stat_path(const Path& path) {
     if constexpr (std::same_as<std::remove_cvref_t<Path>, std::filesystem::path>)
-        return try_stat(std::string_view{path.string()});
+        return try_stat(path.c_str());
     else
-        return try_stat(std::string_view{path});
+        return try_stat(path);
 }
 
 template<StatPath Path>
 [[nodiscard]] inline std::expected<StatType, std::error_code>
 try_lstat_path(const Path& path) {
     if constexpr (std::same_as<std::remove_cvref_t<Path>, std::filesystem::path>)
-        return try_lstat(std::string_view{path.string()});
+        return try_lstat(path.c_str());
     else
-        return try_lstat(std::string_view{path});
+        return try_lstat(path);
 }

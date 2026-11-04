@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <concepts>
 #include <filesystem>
 #include <iomanip>
@@ -7,11 +8,15 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <limits>
 #include <limits.h>
 #include <type_traits>
 
 #include <config.h>
 
+#ifdef HAVE_CHARCONV
+# include <charconv>
+#endif
 #ifdef HAVE_FORMAT
 # include <format>
 #endif
@@ -46,19 +51,43 @@ inline void AddThousandsSeparators(std::string& dest, char seps) {
     }
 }
 
-/// Format integral counts and sizes using C++23's type-safe formatter when available.
+/// Format integral counts and sizes with to_chars when the library supports it.
 template<std::integral T>
 void PrintNum(std::string& dest, char seps, T value) {
+    auto fallback = [&] {
+        if constexpr (std::same_as<T, bool>) {
+            dest = value ? "1" : "0";
+        } else {
 #ifdef HAVE_FORMAT
-    dest = std::format("{:d}", value);
+            dest = std::format("{:d}", value);
 #else
-    if constexpr (std::is_signed_v<T>) {
-        // Size/count values in dirr are no wider than long long.
-        dest = Printf("%lld", static_cast<long long>(value));
+            if constexpr (std::is_signed_v<T>) {
+                // Size/count values in dirr are no wider than long long.
+                dest = Printf("%lld", static_cast<long long>(value));
+            } else {
+                // The explicit cast selects the matching legacy printf argument type.
+                dest = Printf("%llu", static_cast<unsigned long long>(value));
+            }
+#endif
+        }
+    };
+
+#ifdef HAVE_CHARCONV
+    if constexpr (std::same_as<T, bool>) {
+        fallback(); // std::to_chars intentionally has no bool overload.
     } else {
-        // The explicit cast selects the matching legacy printf argument type.
-        dest = Printf("%llu", static_cast<unsigned long long>(value));
+        // digits10 is nonnegative for integral types, so this size conversion is safe.
+        constexpr std::size_t buffer_size =
+            static_cast<std::size_t>(std::numeric_limits<T>::digits10) + 3;
+        std::array<char, buffer_size> buffer{};
+        const auto converted = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+        if (converted.ec == std::errc{})
+            dest.assign(buffer.data(), converted.ptr);
+        else
+            fallback();
     }
+#else
+    fallback();
 #endif
     AddThousandsSeparators(dest, seps);
 }

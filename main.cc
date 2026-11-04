@@ -828,10 +828,6 @@ static void PrintAllFilesCollectedSoFar()
 
 static void SingleFile(string&& Buffer)
 {
-    #ifndef S_ISLNK
-    int Links=0;
-    #endif
-
     #ifdef DJGPP
     struct ffblk Bla;
     if(findfirst(Buffer.c_str(), &Bla, 0x37))
@@ -841,10 +837,12 @@ static void SingleFile(string&& Buffer)
     }
     #endif
 
-    auto stat_result = try_lstat_path(Buffer);
 #ifdef S_ISLNK
-    if (!Links)
-        stat_result = try_stat_path(Buffer);
+    auto stat_result = Links == 0
+        ? try_stat_path(Buffer)
+        : try_lstat_path(Buffer);
+#else
+    auto stat_result = try_lstat_path(Buffer);
 #endif
     if (!stat_result) {
         const std::error_code error = stat_result.error();
@@ -983,9 +981,15 @@ static void ScanDir(std::string&& Source) // Directory to list
     {
         if(!ShowDotFiles && ent->d_name[0] == '.') continue;
 
-        std::string Buffer = Source;
-        if(Buffer.back() != '/') Buffer += '/';
-        Buffer += ent->d_name;
+        const bool need_separator = Source.empty() || Source.back() != '/';
+        const std::size_t separator_size = need_separator ? std::size_t{1} : std::size_t{0};
+        const std::size_t name_size = std::strlen(ent->d_name);
+        std::string Buffer;
+        // Source and d_name are byte strings; reserve the exact joined byte length.
+        Buffer.reserve(Source.size() + separator_size + name_size);
+        Buffer = Source;
+        if(need_separator) Buffer += '/';
+        Buffer.append(ent->d_name, name_size);
 
         SingleFile(std::move(Buffer));
     }
