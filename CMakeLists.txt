@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.20)
 project(dirr
     VERSION 3.39.1
     DESCRIPTION "Colourful ls replacement — dirr"
-    HOMEPAGE_URL "https://iki.fi/bisqwit/source/dirr.html"
     LANGUAGES CXX
 )
 
@@ -42,7 +41,7 @@ else()
 endif()
 
 # ─────────────────────────────────────────────────────────────────────
-#  Feature detection — replaces old ./configure shell script
+#  Feature detection
 # ─────────────────────────────────────────────────────────────────────
 include(CheckIncludeFileCXX)
 include(CheckCXXSymbolExists)
@@ -165,8 +164,8 @@ endif()
 
 # ─────────────────────────────────────────────────────────────────────
 #  Generate config.h from template
-#  Source files include <config.h> (angle brackets) so this generated
-#  platform-specific header takes precedence over the Makefile fallback.
+#  Source files include <config.h> (angle brackets), and the binary-tree
+#  include directory is searched first.
 # ─────────────────────────────────────────────────────────────────────
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/config.h.in"
@@ -280,7 +279,7 @@ if(HAVE_FILESYSTEM)
     # No extra link needed on modern libstdc++
 endif()
 
-# Version as compile definition — replaces Makefile CPPFLAGS -DVERSION=...
+# Version as compile definition
 target_compile_definitions(dirr PRIVATE VERSION="${PROJECT_VERSION}")
 
 # ─────────────────────────────────────────────────────────────────────
