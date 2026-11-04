@@ -22,6 +22,8 @@ endif()
 #  Options
 # ─────────────────────────────────────────────────────────────────────
 option(DIRR_STATIC "Build statically linked binary (Linux)" OFF)
+option(DIRR_STRIP "Strip symbols from the dirr executable" OFF)
+option(DIRR_USE_MOLD "Use mold when available and supported by the compiler" ON)
 option(DIRR_ENABLE_LTO "Enable link-time optimisation" ON)
 option(DIRR_ENABLE_SANITIZER "Enable address/undefined sanitizers" OFF)
 option(DIRR_PRELOAD_UIDGID "Preload passwd/group at startup" OFF)
@@ -192,6 +194,36 @@ set(DIRR_SOURCES
 
 add_executable(dirr ${DIRR_SOURCES})
 
+# Prefer mold when requested, installed, and accepted by the active toolchain.
+# A missing or unsupported mold is a non-fatal fallback to CMake's linker.
+set(DIRR_MOLD_ACTIVE OFF)
+set(DIRR_DEFAULT_LINKER_DESCRIPTION "toolchain default")
+if(CMAKE_LINKER)
+    get_filename_component(DIRR_DEFAULT_LINKER_NAME "${CMAKE_LINKER}" NAME)
+    set(DIRR_DEFAULT_LINKER_DESCRIPTION "toolchain default (${DIRR_DEFAULT_LINKER_NAME})")
+endif()
+set(DIRR_LINKER_SELECTED "${DIRR_DEFAULT_LINKER_DESCRIPTION}")
+
+if(DIRR_USE_MOLD)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        find_program(DIRR_MOLD_EXECUTABLE NAMES mold)
+        if(DIRR_MOLD_EXECUTABLE)
+            include(CheckLinkerFlag)
+            check_linker_flag(CXX "-fuse-ld=mold" DIRR_CXX_LINKER_SUPPORTS_MOLD)
+            if(DIRR_CXX_LINKER_SUPPORTS_MOLD)
+                set(DIRR_MOLD_ACTIVE ON)
+                set(DIRR_LINKER_SELECTED "mold")
+            else()
+                set(DIRR_LINKER_SELECTED "${DIRR_DEFAULT_LINKER_DESCRIPTION} (mold unsupported)")
+            endif()
+        else()
+            set(DIRR_LINKER_SELECTED "${DIRR_DEFAULT_LINKER_DESCRIPTION} (mold not found)")
+        endif()
+    else()
+        set(DIRR_LINKER_SELECTED "${DIRR_DEFAULT_LINKER_DESCRIPTION} (compiler unsupported)")
+    endif()
+endif()
+
 target_include_directories(dirr BEFORE PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"  # generated config.h first
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -228,6 +260,13 @@ if(DIRR_STATIC)
     target_link_options(dirr PRIVATE -static -Wl,--gc-sections)
 else()
     target_link_options(dirr PRIVATE -Wl,--gc-sections)
+endif()
+
+if(DIRR_MOLD_ACTIVE)
+    target_link_options(dirr PRIVATE -fuse-ld=mold)
+endif()
+if(DIRR_STRIP)
+    target_link_options(dirr PRIVATE -s)
 endif()
 
 # Required libs
@@ -352,6 +391,9 @@ message(STATUS "dirr ${PROJECT_VERSION} — C++23 configuration")
 message(STATUS "  C++ standard  : ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build type    : ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Static        : ${DIRR_STATIC}")
+message(STATUS "  Strip         : ${DIRR_STRIP}")
+message(STATUS "  Mold requested: ${DIRR_USE_MOLD}")
+message(STATUS "  Linker selected: ${DIRR_LINKER_SELECTED}")
 message(STATUS "  LTO           : ${DIRR_ENABLE_LTO}")
 message(STATUS "  Sanitizer     : ${DIRR_ENABLE_SANITIZER}")
 message(STATUS "  HAVE_CONCEPTS : ${HAVE_CONCEPTS}")
