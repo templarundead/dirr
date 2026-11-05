@@ -2,7 +2,7 @@
 
 **Reviewed revision:** `0495bf12094b059ad3cb08fd100ebdc065d411d5`
 
-**Review type:** source inspection plus a limited local microbenchmark; no generalized performance claim is made.
+**Review type:** source inspection plus targeted local benchmarks. The AArch64 comparison below is specific to the tested host, build, and fixture; it is not a generalized performance guarantee.
 
 **Scope:** findings F1–F11 from the supplied audit. F12/PGO is intentionally out of scope at the user's request.
 
@@ -10,9 +10,9 @@
 
 | Finding | Assessment |
 | --- | --- |
-| F1 | Confirmed structurally and optimized in this draft: per-item widths are computed once and reused during the vertical-layout binary search. |
+| F1 | Confirmed structurally and optimized in this draft; the targeted AArch64 `-w` benchmark measured 7.46% lower mean wall time (workload-specific). |
 | F2 | Partially confirmed: width estimation and rendering can repeat field work; the cost depends on selected fields and layout. |
-| F3 | Partially confirmed and optimized structurally: the `Links >= 2` branch now reuses one `readlink` result; `stat`/`lstat` counts remain path-dependent. |
+| F3 | Confirmed structurally and optimized; targeted AArch64 link-resolution modes measured 7.12–9.18% lower mean wall time. Other metadata calls remain path-dependent. |
 | F4 | Confirmed structurally: `Inodemap` receives every non-directory passed to `UpdateEstimations`, without an `st_nlink > 1` check. |
 | F5 | Character-at-a-time output path confirmed; syscall savings from `setvbuf` are not established. |
 | F6 | The stated locale-based explanation is not supported by the current formatter; numeric stream formatting remains a separate optimization hypothesis. |
@@ -22,7 +22,7 @@
 | F10 | Partially confirmed: full paths and path-based metadata lookups are used; the claimed temporary allocation does not apply to `std::string` callers. |
 | F11 | Mutexes are present in the normal GCC build; this confirms a possible cost, not that the lock is a measured hotspot. |
 
-“Confirmed” here means the code path exists. It does **not** establish that it materially affects elapsed time, CPU use, syscalls, or allocations on a representative workload. The supplied inventory enumerates F1–F12 (12 findings) while also citing 11 translation units; this review treats the F-numbers as finding IDs, not as a translation-unit count.
+For findings without a cited benchmark, “confirmed” means the code path exists; source inspection alone does **not** establish its runtime impact. The F1/F3 measurements below are specific to one AArch64 build and fixture and should not be generalized. The supplied inventory enumerates F1–F12 (12 findings) while also citing 11 translation units; this review treats the F-numbers as finding IDs, not as a translation-unit count.
 
 ## Finding details
 
@@ -95,5 +95,33 @@ For the F1 and F3 candidates, local Release builds and Debug ASan/UBSan builds e
 Byte comparisons were identical for aliases `-a0` through `-a6` on a fixture containing hidden files, a directory, a hardlink, and valid, absolute, dangling, directory, and chained symlinks. Explicit `-l0` through `-l5` were also compared after the aliases (42 combinations); a separate vertical-layout comparison with link modes 2, 3, and 5 was byte-identical.
 
 A local 6,000-entry vertical-layout microbenchmark (3 warm-ups, 15 alternating timed runs per version, same host) measured median wall time of 43.4 ms for baseline and 29.0 ms for the F1 candidate (33.3% lower). This is indicative only: the samples include scheduler noise, and this fixture/timing method is not a substitute for the CI profiler. A separate 10,000-symlink probe observed 139.0 ms vs. 127.4 ms for `-l3`, but the `-l0` control also varied; no attributable F3 wall-time gain is claimed from that run.
+
+### Additional AArch64 main-versus-draft benchmark
+
+User-provided Hyperfine 2.0.0 JSON results compare Linux/AArch64 Release binaries built with static linking and LTO, with 50 samples per version on the same symlink fixture. The build configuration was:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDIRR_ENABLE_LTO=ON -DDIRR_STATIC=ON -DDIRR_ENABLE_SANITIZER=OFF
+cmake --build build --parallel 8
+```
+
+The commands used the same `-A -c -X80` display options and varied the mode (`-a0` through `-a6`, `-C`, `-e`, or `-w`). The table reports mean wall-clock time; positive percentages mean the draft was faster. The approximate 95% Welch intervals use the reported means and standard deviations, treating each version's 50 samples as independent (not paired or bootstrap intervals).
+
+| Mode | Main → draft (ms) | Draft faster | Approx. 95% interval |
+| --- | ---: | ---: | ---: |
+| `a0` | 99.58 → 99.32 | 0.27% | −2.18…+2.72% |
+| `a1` | 226.21 → 209.81 | 7.25% | +6.59…+7.91% |
+| `a2` | 100.27 → 99.21 | 1.06% | −0.52…+2.65% |
+| `a3` | 97.94 → 95.79 | 2.20% | −0.54…+4.94% |
+| `a4` | 103.62 → 100.89 | 2.63% | +0.71…+4.56% |
+| `a5` | 226.00 → 208.19 | 7.88% | +6.64…+9.13% |
+| `a6` | 220.09 → 201.69 | 8.36% | +7.33…+9.40% |
+| `-C` | 211.20 → 191.82 | 9.18% | +7.67…+10.68% |
+| `-e` | 181.17 → 168.28 | 7.12% | +5.23…+9.01% |
+| `-w` | 164.98 → 152.67 | 7.46% | +6.49…+8.43% |
+
+The `Links >= 2` modes (`a1`, `a5`, `a6`, `-C`, and `-e`) improved by 7.12–9.18%; their mean system time fell by 9.7–13.3%, consistent with the F3 `readlink()` reuse. In the current source, `opt_a(1)` leaves `Links` at its default value of 3, despite the help text listing `-l1`, so `a1` also exercises F3. The `-w` alias sets `Links=1` and enables vertical layout, isolating the F1 path among these changes: wall time fell 7.46%, CPU cycles fell 11.11%, and instructions fell 12.27%. Mean peak resident memory rose from 4.61 to 4.98 MiB (+7.95%), an observed memory tradeoff of caching per-entry estimates.
+
+The `a0`, `a2`, and `a3` intervals include zero. `a4` has a small positive result but does not exercise either optimized path; it is not attributed to F1 or F3. These are targeted results on one host and fixture, not a general performance guarantee.
 
 `scripts/profile-hot-path.sh` ran locally with baseline/candidate binaries, but Hyperfine, perf, strace, and Heaptrack were unavailable, so the script recorded `NOT RUN` for those probes. The configured PR profiling workflow builds base and head identically, runs the same script with its profiling tools, and uploads a report artifact for each push. CMake was installed outside the repository for local validation; no project dependency or workflow was added or changed.
