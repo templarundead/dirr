@@ -14,7 +14,7 @@
 | F2 | Confirmed structurally and partly optimized. Repeated symlink resolution and per-call name copies are removed, and passwd/group repeats now stay out of the shared map; the duplicated size-column formatting was measured at ≤0.5% and deliberately left unchanged (see the F2 follow-up section). |
 | F3 | Confirmed structurally and optimized: readlink reuse measured 7.12–9.18% lower mean wall time in the earlier AArch64 comparison; a successful-target-stat cache reduced a local 50k-link workload by 9.62% mean wall time and halved target `stat()` calls. Both results are fixture-specific. |
 | F4 | Confirmed structurally: `Inodemap` receives every non-directory passed to `UpdateEstimations`, without an `st_nlink > 1` check. |
-| F5 | Character-at-a-time output path confirmed; syscall savings from `setvbuf` are not established. |
+| F5 | Confirmed and optimized in this draft: the per-character `putchar()` call is replaced by the inlined, lock-free `putc_unlocked()`, measured at 3.5–8.1% lower CPU time. An own 64 KiB output buffer was also implemented and measured: it packs the stdio calls but does not lower CPU time (`+0.6…+1.1%`), so it was rejected. `setvbuf()` is not needed; syscall counts were never the cost. |
 | F6 | The stated locale-based explanation is not supported by the current formatter. A `to_chars` trial for link counts showed no measurable speedup on the corrected local benchmark. |
 | F7 | Confirmed for the legacy `Gprintf` path: a `PrintfProxy` parses the format on each invocation. `Gformat` bypasses it when available. |
 | F8 | The supplied date-cost estimates are overstated or describe the wrong branches; a corrected local date-width benchmark measured 31.54% lower mean wall time on its targeted workload. |
@@ -48,6 +48,8 @@ The draft also gives each listed symlink a lazy `LinkTargetStatCache` when the n
 ### F5 — character-at-a-time output
 
 `Gputch()` routes ordinary output characters through `putchar()` (or the platform-specific `putch` path), so the per-character function-call path exists. `stdout` is a buffered C stream, however; the source alone does not imply one `write(2)` syscall per character or show that `setvbuf()` would reduce syscall counts. A batching change should be evaluated for CPU/locking cost and must preserve output, color handling, paging, and column tracking. See `cons.cc:272–291` and `cons.hh:25–42`.
+
+The call counts are now measured rather than inferred: a 20,000-file listing issues 0.77–1.38 million `putc()` calls and 120,000-160,000 `fwrite()` calls per run, and no `write(2)` calls reach the descriptor before the stream is flushed. `setvbuf()` would therefore address the wrong layer — the cost is the locked per-character call itself. See the F5 series at the end of this document for the measurements, the adopted change, and the buffer experiment that was rejected on measurement.
 
 ### F6 — numeric formatting and locale
 
@@ -106,6 +108,10 @@ When `HAVE_CHARCONV` is available, link-count width estimation and output use `s
 ### Cache the color sort key
 
 When the active sort string contains `c` or `C`, the pre-sort pass computes each `StatItem`'s `GetNameAttr()` once. The comparator uses the cached integer, and `TellMe()` reuses it for the initial filename attribute. Other sort orders leave the optional cache empty and keep the existing rendering path. The compared value is still the exact per-item result of `GetNameAttr(stat, NameOnly(name))`; the sort remains `std::sort`.
+
+### F5 — unlock the per-character output path
+
+dirr writes from a single thread, so the `FILE` locking that `putchar()` and `fwrite()` perform buys nothing. `Gputch()` now emits characters with `putc_unlocked()`, and the padding-run and attribute-escape writes use `fwrite_unlocked()`; both are available under `-std=c++23` with glibc and expand to inline buffer stores, so the per-character call does not even reach the PLT in the Release build. `FlushSetAttr()` already returns immediately when the attributes match, so `Gputch()` now tests that condition itself instead of calling through on every character. The DJGPP console path (`putch`/`putchar`) is unchanged.
 
 No CLI option, default, output format, sorting order, palette, or paging behavior was intentionally changed.
 
@@ -247,3 +253,52 @@ Wall-clock series for the complete branch (25 interleaved runs per configuration
 Verification for this series: Release and Debug/ASan+UBSan CTest pass 15/15, sanitizer runs over the four fixtures are clean, and 282 byte-for-byte comparisons of baseline versus draft output (`-a0`…`-a6` with `-A -c`, `-w`, `-C`, `-w -C`; `-l0`…`-l5`; `-e`; default and custom `--format` field orders on four directories) produced no differences. Hyperfine, perf, strace and Heaptrack are still unavailable on this host, so `scripts/profile-hot-path.sh` again recorded `NOT RUN` for them.
 
 The cycle counts come from instrumented builds and the wall-clock figures from separate Release binaries, so the two are not combined into a single percentage; all numbers describe this host, compiler, build and fixture.
+
+### F5 output-path series (2026-11-05)
+
+This series isolates the character-at-a-time output path on the same x86_64 host (Debian 12, GCC 12.2.0, CMake 4.4.4, Release/LTO binaries from the project's own CMake lists). Two independent instruments were used, for the same reason as in the F2 series: wall-clock differences of a few percent are not resolvable on a shared two-vCPU host.
+
+- An `LD_PRELOAD` counter over `putc`/`fputc`, `putc_unlocked`, `fwrite`/`fwrite_unlocked`, `printf` and `write(1)`, reporting call and byte counts per run. GCC compiles `putchar()` into a `putc()`/`_IO_putc` call, and the Release binary contains no `putchar` symbol at all, so counting `putchar` alone would have measured nothing.
+- Wall time and child CPU time (`ru_utime + ru_stime` from `wait4`) of alternating A/B subprocess pairs, five listings per sample, reporting the minimum and the median over 20–25 rounds, with a reversed-order repeat to expose order bias.
+
+Fixtures were the same flat 20,000-entry directories as in the F2 series (short names, 60-character names, symlinks), listed with `-A -c -X80` and output to `/dev/null`, `LC_ALL=C`, `TZ=UTC`, `COLS=80`.
+
+#### Call counts before the change
+
+| Fixture | `putc()` calls | `fwrite()` calls (bytes) | `printf` | `write(1)` before flush |
+| --- | ---: | ---: | ---: | ---: |
+| 20k regular files | 772,185 | 120,029 (228,095) | 0 | 0 |
+| 20k long names | 1,380,186 | 120,033 (200,151) | 0 | 0 |
+| 20k symlinks, `-l3` | 1,080,190 | 160,031 (240,122) | 0 | 0 |
+
+Two conclusions follow from the counts. First, the per-character path is only 26–32 bytes per listed name here, so its total is 0.8–1.4 million locked calls per run, not the tens of millions a per-column estimate suggests. Second, the attribute writer is not the frequent operation: roughly six `fwrite()` calls per file survive even with `-c`, which is the padding runs shorter than five characters rather than a flush per attribute change. No `write(2)` call reaches the descriptor during the listing, so `setvbuf()` would only change where an existing stdio buffer flushes.
+
+#### Changes made
+
+| Commit | Change | Structural effect |
+| --- | --- | --- |
+| `b35b4ef` | `Gputch()` emits through `putc_unlocked()`; padding runs and attribute escapes use `fwrite_unlocked()`; `Gputch()` tests `TextAttr != OldAttr` before calling `FlushSetAttr()` | `putc` calls 772,185 → 0 (inlined, no PLT symbol left in the binary); `fwrite` calls stay 120,029 but unlocked |
+
+Wall time and CPU time, candidate minus baseline (negative = faster):
+
+| Workload | Wall min | Wall median | CPU min | CPU median |
+| --- | ---: | ---: | ---: | ---: |
+| 20k files, default | −3.76% | −5.69% | −5.31% | −6.26% |
+| 20k long names, default | −9.31% | −7.25% | −7.85% | −8.13% |
+| 20k symlinks, `-l3` | −3.80% | −3.15% | −3.46% | −4.51% |
+
+The reversed-order repeat (candidate as A) reported +3.67%/+4.89%, +7.14%/+8.66% and +5.44%/+5.48%, i.e. the same candidate advantage, so the result is not an artifact of run order. Long names gain most because they carry the most characters per name; the symlink workload gains least because F3's syscall savings already dominate it.
+
+#### Experiment rejected on measurement
+
+A 64 KiB output buffer inside `cons.cc` — a single `Emit`/`EmitChar`/`FlushOut` sink fed by `FlushSetAttr()`, `Gputch()`, the `ESC[nC` escape and the padding runs, flushed when full, on `'\n'` only when `isatty(1)`, before the pager reads a key, and at exit — was implemented and verified byte-identical (282 comparisons, plus tty, pager, `--help`, `| head` and SIGINT runs). It did reduce the write sizes: the 120,029 stdio calls became 16 blocks of about 62 KiB, and a piped run issues about 16 `write(2)` calls instead of about 250. It did not reduce CPU time:
+
+| Workload | CPU min | CPU median |
+| --- | ---: | ---: |
+| 20k files, default | +0.68% | +1.63% |
+| 20k long names, default | +1.06% | +0.35% |
+| 20k symlinks, `-l3` | +0.59% | −1.63% |
+
+The reason is the same measurement that motivated the unlocked call: after `b35b4ef`, `putc_unlocked()` is already an inline pointer store into the stdio buffer, so a second buffer adds two branches per byte and removes nothing. The experiment also produced a real ordering hazard rather than a theoretical one: the default build defines neither `ColourPrints` nor `HAVE_PRINT`, so `argh.cc` writes the `--help` option list to `stdout` with a direct `std::fwrite()`, which overtook the still-buffered copyright header and moved it to the end of the output. The hazard is fixable with a flush hook (that fix was written and verified), but a change that is neutral in time and adds a correctness constraint does not belong in the branch, so it was reverted. The commit `b35b4ef` is the whole of this series.
+
+Verification for this series: Release and Debug/ASan+UBSan CTest pass 15/15; sanitizer runs over the four fixtures are clean; the 282 byte-for-byte comparisons of the reviewed baseline against the candidate (`-a0`…`-a6` with `-A -c`, `-w`, `-C`, `-w -C`; `-l0`…`-l5`; `-e`; `-S`; default and `-X40`) show no differences; tty output captured through a pty is identical apart from the live free-space figure; the pager (`-p`, answered with `q`, spaces and carriage returns) is identical including the `--More--` prompt and its erase sequence; `--help` is identical for both a pipe and a tty; `dirr | head -3` exits with the same status (141) in both; and a SIGINT delivered mid-listing leaves the same complete `^C`/sums/free-space tail in both. Hyperfine, perf, strace and Heaptrack remain unavailable on this host, so `scripts/profile-hot-path.sh` again recorded `NOT RUN` for them.
