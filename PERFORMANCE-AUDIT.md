@@ -21,8 +21,9 @@
 | F9 | Partially confirmed: cache hits still lock and copy the cached string; NSS locking is limited to misses. |
 | F10 | Partially confirmed: full paths and path-based metadata lookups are used; the claimed temporary allocation does not apply to `std::string` callers. |
 | F11 | Mutexes are present in the normal GCC build; this confirms a possible cost, not that the lock is a measured hotspot. |
+| Additional color-sort path | `c/C` calls the DFA twice per comparator invocation; a per-entry key cache improved local 50k-file `--sort=c`/`--sort=pcm` timings by 24.77%/29.22% mean. |
 
-For findings without a cited benchmark, “confirmed” means the code path exists; source inspection alone does **not** establish its runtime impact. The F1/F3 measurements below are specific to one AArch64 build and fixture and should not be generalized. The supplied inventory enumerates F1–F12 (12 findings) while also citing 11 translation units; this review treats the F-numbers as finding IDs, not as a translation-unit count.
+For findings without a cited benchmark, “confirmed” means the code path exists; source inspection alone does **not** establish its runtime impact. The historical AArch64 F1/F3 results and the later local microbenchmarks are specific to their host, build, and fixture and should not be generalized. The supplied inventory enumerates F1–F12 (12 findings) while also citing 11 translation units; this review treats the F-numbers as finding IDs, not as a translation-unit count.
 
 ## Finding details
 
@@ -78,6 +79,12 @@ The width estimator handles `%u` and `%z` as fixed widths; for other formats it 
 
 `DFA_DISABLE_MUTEX` is defined under `__SUNPRO_CC`; absent an external build definition, a normal GCC build therefore includes the matcher mutex (or shared-timed mutex). This confirms that synchronization is present, but the source review did not establish that it is a hot path or that removing it would be safe for all uses. Any change should remain narrowly scoped and preserve existing lock semantics. See `dfa_match.hh:6–16`, `dfa_match.hh:140–152`, and the lock macros in `dfa_match.cc:497–505`.
 
+### Additional observation — color sort
+
+`StatItem::operator<` evaluates both `GetNameAttr()` calls for every comparison that reaches a `c` or `C` key (`main.cc:556–557`). Each call reaches `DFA_Matcher::Test()` through `GetNameAttr()` → `NameColor()`; `Test()` takes the shared lock once and scans the basename until a match or the terminating byte (`colouring.cc:16–17`, `setfun.cc:579–582`, `dfa_match.cc:678–699`). Thus `--sort=c`/`--sort=C` can perform about two locked DFA tests per comparison, or roughly 266k calls for a 10k-element `N log₂ N` estimate. The exact count depends on `std::sort`, and a successful DFA match may terminate before the full name is scanned.
+
+Color sorting is absent from the default `pmgU` order, but the built-in `-w`/`-W` presets select `pcm`/`PCM`; their `c/C` key is reached for items tied on the preceding class key. Source inspection cannot establish how often users choose these options.
+
 ## Implemented in this draft
 
 ### F1 — reuse per-item width estimates
@@ -96,19 +103,23 @@ When a date field is active, its estimate is now computed once after command-lin
 
 When `HAVE_CHARCONV` is available, link-count width estimation and output use `std::to_chars()` into a stack buffer and pass the resulting view to `Gwrite()`. Builds without charconv retain the `std::to_string()` fallback. Decimal text and the existing field-padding path are unchanged.
 
-No CLI option, default, output format, sorting, palette, or paging behavior was intentionally changed.
+### Cache the color sort key
+
+When the active sort string contains `c` or `C`, the pre-sort pass computes each `StatItem`'s `GetNameAttr()` once. The comparator uses the cached integer, and `TellMe()` reuses it for the initial filename attribute. Other sort orders leave the optional cache empty and keep the existing rendering path. The compared value is still the exact per-item result of `GetNameAttr(stat, NameOnly(name))`; the sort remains `std::sort`.
+
+No CLI option, default, output format, sorting order, palette, or paging behavior was intentionally changed.
 
 ## Validation and limitations
 
-The current combined candidate, including the successful target-stat cache, date-width cache, and link-count `to_chars`, passed all 15 CTest tests in both Release (static + LTO) and Debug ASan/UBSan builds. These supplementary builds used GCC 12.2.0 and CMake 3.31.6, below the requested GCC 14 floor, so they do not replace the GCC 14+ CI matrix.
+The current combined candidate, including the successful target-stat cache, date-width cache, link-count `to_chars`, and color-sort key cache, passed all 15 CTest tests in both Release (static + LTO) and Debug ASan/UBSan builds. These supplementary builds used GCC 12.2.0 and CMake 3.31.6, below the requested GCC 14 floor, so they do not replace the GCC 14+ CI matrix.
 
-The current target-cache candidate and its immediate parent produced byte-identical output for aliases `-a0` through `-a6` on a fixture containing hidden files, a directory, a hardlink, and valid, absolute, dangling, directory, and chained symlinks. Explicit `-l0` through `-l5` with attached filename field `-f.f` also matched on a 10,000-symlink fixture. The date-width path matched for five formats using attached `-f.f_.d` and `-F<format>` arguments, and the link-count path matched for `-f.h_.f` on a 50,000-file fixture. These corrected invocations attach each specification to its option; a separate `-f` argument would be treated as an operand rather than a field value.
+The current candidate and its immediate parent produced byte-identical output for aliases `-a0` through `-a6` on a fixture containing hidden files, a directory, a hardlink, and valid, absolute, dangling, directory, and chained symlinks. Explicit `-l0` through `-l5` with attached filename field `-f.f` also matched on a 10,000-symlink fixture. For the color-sort change, outputs matched for `-o c`, `-o C`, `-o pcm`, `-o PCM`, `--sort=n`, and `-w` on a 50,000-file fixture. The date-width path matched for five formats using attached `-f.f_.d` and `-F<format>` arguments, and the link-count path matched for `-f.h_.f` on a 50,000-file fixture. These corrected invocations attach each specification to its option; a separate `-f` argument would be treated as an operand rather than a field value.
 
 A local 6,000-entry vertical-layout microbenchmark (3 warm-ups, 15 alternating timed runs per version, same host) measured median wall time of 43.4 ms for baseline and 29.0 ms for the F1 candidate (33.3% lower). This is indicative only: the samples include scheduler noise, and this fixture/timing method is not a substitute for the CI profiler. An earlier 10,000-symlink probe was inconclusive because its `-l0` control also varied; it is superseded by the controlled F3 comparison below.
 
 ### Earlier AArch64 main-versus-draft benchmark (F1/F3 readlink reuse)
 
-User-provided Hyperfine 2.0.0 JSON results compare Linux/AArch64 Release binaries built with static linking and LTO, with 50 samples per version on the same symlink fixture. This comparison predates the later date-width, `to_chars`, and successful target-stat-cache additions; it does not measure those changes. The build configuration was:
+User-provided Hyperfine 2.0.0 JSON results compare Linux/AArch64 Release binaries built with static linking and LTO, with 50 samples per version on the same symlink fixture. This comparison predates the later date-width, `to_chars`, successful target-stat-cache, and color-sort-key additions; it does not measure those changes. The build configuration was:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDIRR_ENABLE_LTO=ON -DDIRR_STATIC=ON -DDIRR_ENABLE_SANITIZER=OFF
@@ -134,6 +145,18 @@ The `Links >= 2` modes (`a1`, `a5`, `a6`, `-C`, and `-e`) improved by 7.12–9.1
 
 The `a0`, `a2`, and `a3` intervals include zero. `a4` has a small positive result but does not exercise either optimized path; it is not attributed to F1 or F3. These are targeted results on one host and fixture, not a general performance guarantee.
 
+### Color-sort key benchmark
+
+The pre-cache baseline and candidate were dynamic Release/LTO binaries built with GCC 12.2.0 and CMake 3.31.6 on this x86_64 host. A 50,000-regular-file fixture was tested with output redirected to `/dev/null`, 3 warm-ups and 30 randomized subprocess runs per version for each sort order (`LC_ALL=C`, `TZ=UTC`). Mean/median wall times and the rough independent-sample Welch 95% interval for mean improvement were:
+
+| Sort order | Baseline mean/median (ms) | Candidate mean/median (ms) | Mean reduction | Approx. 95% interval |
+| --- | ---: | ---: | ---: | ---: |
+| `--sort=c` | 213.842 / 211.339 | 160.869 / 157.884 | 24.77% | 21.81…27.73% |
+| `--sort=pcm` | 241.429 / 235.316 | 170.879 / 164.530 | 29.22% | 25.77…32.67% |
+| `--sort=n` control | 164.456 / 162.847 | 162.723 / 162.702 | 1.05% | −1.87…+3.98% |
+
+The `--sort=n` control shows no measurable regression. These timings are local and workload-specific; the per-entry `std::optional<int>` adds storage to each `StatItem`, and peak memory was not measured.
+
 ### Corrected date-width benchmark
 
 The corrected 50,000-file vertical-layout benchmark used `-C -vc -A -c -X80 -f.f_.d`, with the field specification attached to `-f`. Release/static/LTO binaries were compared in 30 randomized subprocess runs per version on this x86_64 host. Baseline mean/median wall time was 222.287/214.589 ms; the date-width candidate measured 152.180/151.945 ms, a 31.54% lower mean. The rough independent-sample Welch 95% interval for the improvement was 28.79–34.28%. The earlier 112.68/110.65 ms figures used an invalid, separated `-f` argument and are withdrawn.
@@ -146,4 +169,4 @@ The corrected 50,000-file benchmark used the attached field specification `-f.h_
 
 A 50,000-symlink fixture pointed every link at the same target. Baseline and target-cache candidate were dynamic Release/LTO binaries differing only by the target-stat cache; 30 randomized subprocess runs per version used `-l3 -A -c -X80 -f.f`. Mean/median wall time fell from 378.918/370.942 ms to 342.456/335.488 ms (9.62% lower mean); the rough independent-sample Welch 95% interval for improvement was 6.51–12.73%. A custom `LD_PRELOAD` counter filtered calls to the resolved `targets/file` path and recorded 100,000 target `stat()` calls for the baseline versus 50,000 for the candidate (two per link reduced to one per link); the single-link probe likewise changed from two calls to one. This confirms the repeated target-stat path and the intended call-count reduction, while the wall-time result remains specific to this synthetic fixture and host. Heaptrack was unavailable, so the memory overhead of the lazily allocated per-symlink cache was not measured.
 
-`scripts/profile-hot-path.sh` ran locally with the pre-cache baseline and target-cache candidate, but Hyperfine, perf, strace, and Heaptrack were unavailable, so the script recorded `NOT RUN` for those probes. The randomized subprocess and LD_PRELOAD measurements above are supplementary, not substitutes for those tools or for the configured CI profiler. The PR profiling workflow builds base and head identically, runs the same script with its profiling tools, and uploads a report artifact for each push; the latest available artifact could not be downloaded (`EOF`), so no CI profiling numbers are cited here. CMake was installed outside the repository for local validation; no project dependency or workflow was added or changed.
+`scripts/profile-hot-path.sh` ran locally against the target-stat and color-sort baseline/candidate pairs, but its built-in `-l0`/`-l3` workload does not exercise `c/C`; Hyperfine, perf, strace, and Heaptrack were also unavailable, so those probes were recorded as `NOT RUN`. The targeted randomized subprocess timings above are supplementary, not substitutes for the configured CI profiler. The PR workflow is configured to upload a report on each push; the prior artifact download failed with `EOF`, so this audit contains no CI profile for the current color-sort change. CMake was installed outside the repository for local validation; no project dependency or workflow was added or changed.

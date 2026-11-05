@@ -33,6 +33,7 @@ static const char VERSIONSTR[] =
 #include <concepts>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -289,7 +290,8 @@ static void TellMe(const StatType &Stat, std::string&& Name
 #ifdef DJGPP
     , unsigned int dosattr
 #endif
-    , LinkTargetStatCache* link_stat_cache)
+    , LinkTargetStatCache* link_stat_cache,
+      std::optional<int> name_attr_cache = std::nullopt)
 {
     std::string OwNum,GrNum,OwNam,GrNam;
     std::size_t ItemLen = 0;
@@ -393,7 +395,8 @@ static void TellMe(const StatType &Stat, std::string&& Name
             }
             case FieldInfo::name:
             {
-                SetAttr( GetNameAttr(Stat, NameOnly(Name)) );
+                SetAttr(name_attr_cache ? *name_attr_cache
+                                        : GetNameAttr(Stat, NameOnly(Name)));
 
                 const char *hardlinkfn = Inodemap.get(Stat.st_dev, Stat.st_ino);
                 if(hardlinkfn && Name == hardlinkfn) hardlinkfn = nullptr;
@@ -508,6 +511,7 @@ public:
     unsigned dosattr;
     #endif
     std::string Name;
+    std::optional<int> NameAttr{};
     std::unique_ptr<LinkTargetStatCache> LinkStatCache{};
 public:
     StatItem(const StatType &t,
@@ -553,8 +557,8 @@ public:
             SizeType Result=0;
             switch(c)
             {
-                case 'c': Result = GetNameAttr(me.Stat, NameOnly(me.Name)) - GetNameAttr(other.Stat, NameOnly(other.Name)); break;
-                case 'C': Result = GetNameAttr(other.Stat, NameOnly(other.Name)) - GetNameAttr(me.Stat, NameOnly(me.Name)); break;
+                case 'c': Result = me.NameAttr.value() - other.NameAttr.value(); break;
+                case 'C': Result = other.NameAttr.value() - me.NameAttr.value(); break;
                 case 'e': Result = me.Name.size() - other.Name.size(); break;
                 case 'E': Result = other.Name.size() - me.Name.size(); break;
                 case 'n': Result = strcmp(me.Name.c_str(), other.Name.c_str()); break;
@@ -766,7 +770,13 @@ static void PrintAllFilesCollectedSoFar()
     auto& f = CollectedFilesForCurrentDirectory;
 
     if(!Sorting.empty())
+    {
+        // Compute color keys outside the comparator so sorting does not repeat DFA matches.
+        if(f.size() > 1 && Sorting.find_first_of("cC") != std::string::npos)
+            for(StatItem& item : f)
+                item.NameAttr = GetNameAttr(item.Stat, NameOnly(item.Name));
         std::sort(f.begin(), f.end());
+    }
 
     EstimateFields();
 
@@ -845,7 +855,7 @@ static void PrintAllFilesCollectedSoFar()
                 #ifdef DJGPP
                        , tmp.dosattr
                 #endif
-                       , tmp.LinkStatCache.get());
+                       , tmp.LinkStatCache.get(), tmp.NameAttr);
             }
             if(CurrentColumn) { Gputch('\n'); RowLen=0; CurrentColumn=0; }
         }
@@ -865,7 +875,7 @@ static void PrintAllFilesCollectedSoFar()
             #ifdef DJGPP
                    , tmp.dosattr
             #endif
-                   , tmp.LinkStatCache.get());
+                   , tmp.LinkStatCache.get(), tmp.NameAttr);
         }
         Dumping = false;
     }
