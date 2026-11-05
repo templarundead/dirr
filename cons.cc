@@ -117,6 +117,29 @@ void GetScreenGeometry()
     ScreenInitializer.Get();
 }
 
+// dirr writes from a single thread, so the stdio locking that putchar() and
+// fwrite() perform is pure overhead. glibc expands these to their unlocked
+// fast paths; other platforms keep the portable calls.
+namespace {
+inline void PutByte(int c)
+{
+#ifdef DJGPP
+    (Colors ? putch : putchar)(c);
+#else
+    putc_unlocked(c, stdout);
+#endif
+}
+
+inline std::size_t PutBytes(const char* data, std::size_t count)
+{
+#ifdef DJGPP
+    return std::fwrite(data, 1, count, stdout);
+#else
+    return fwrite_unlocked(data, 1, count, stdout);
+#endif
+}
+} // namespace
+
 static void FlushSetAttr()
 {
     if(TextAttr == OldAttr)return;
@@ -226,7 +249,7 @@ static void FlushSetAttr()
             }
         }
         Buffer[Buflen++] = 'm';
-        std::fwrite(Buffer,1,Buflen,stdout);
+        (void)PutBytes(Buffer, Buflen);
 #endif
     }
     OldAttr = TextAttr;
@@ -277,18 +300,14 @@ int Gputch(int x)
     // When printing a newline, always do that with default background color
     if(x=='\n' && BackgroundOf(TextAttr) != 0) GetDescrColor(ColorDescr::TEXT, 1);
 
-    // If printing spaces, only change color when the background color changes
-    if(x != ' ' || BackgroundOf(TextAttr) != BackgroundOf(OldAttr))
+    // If printing spaces, only change color when the background color changes.
+    // FlushSetAttr() returns immediately when the attributes already match, so
+    // checking that here keeps the common case out of the call.
+    if(TextAttr != OldAttr
+    && (x != ' ' || BackgroundOf(TextAttr) != BackgroundOf(OldAttr)))
         FlushSetAttr();
 
-    auto put = [](int c)
-    {
-#ifdef DJGPP
-        (Colors?putch:putchar)(c);
-#else
-        putchar(c);
-#endif
-    };
+    auto put = [](int c) { PutByte(c); };
 
     static int Spaces=0;
     switch(x)
@@ -368,7 +387,7 @@ int Gputch(int x)
                 {
                     const auto count = static_cast<std::size_t>(
                         std::min(int(sizeof spacebuf), Spaces));
-                    const auto written = std::fwrite(spacebuf, 1, count, stdout);
+                    const auto written = PutBytes(spacebuf, count);
                     Spaces -= static_cast<int>(written); // count never exceeds sizeof spacebuf
                 }
             }
