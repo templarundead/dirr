@@ -35,14 +35,14 @@ struct LinkTargetInfo
 };
 
 // Fills `cache` for `link` (one readlink() at most) and returns its views.
-LinkTargetInfo LinkTargetCached(const std::string& link, LinkTargetStatCache& cache);
+LinkTargetInfo LinkTargetCached(std::string_view link, LinkTargetStatCache& cache);
 
 // stat()/lstat() of the followed target, memoised in `cache`.
 // Returns nullptr when the call fails, exactly like try_stat()/try_lstat().
 const StatType* LinkTargetStatCached(LinkTargetStatCache& cache);
 const StatType* LinkTargetLstatCached(LinkTargetStatCache& cache);
 
-std::size_t GetName(std::string filename,
+std::size_t GetName(std::string_view filename,
                     const StatType& stat,
                     std::size_t space,
                     bool fill,

@@ -15,16 +15,16 @@ static const char HLinkArrow[] = " = ";
 int Links;
 #endif
 
-LinkTargetInfo LinkTargetCached(const std::string& link, LinkTargetStatCache& cache)
+LinkTargetInfo LinkTargetCached(std::string_view link, LinkTargetStatCache& cache)
 {
     // A different source path (a link target that is itself a link, or a
     // hardlink target) invalidates the entry.
     if(!cache.target_initialized || cache.source != link)
     {
         std::string unfixed_target;
-        cache.fixed_target = LinkTarget(link, true, &unfixed_target);
+        cache.fixed_target = LinkTarget(std::string(link), true, &unfixed_target);
         cache.link_target  = std::move(unfixed_target);
-        cache.source       = link;
+        cache.source       = std::string(link);
         cache.target_initialized = true;
         cache.stat_cached  = false;
         cache.lstat_cached = false;
@@ -60,7 +60,7 @@ const StatType* LinkTargetLstatCached(LinkTargetStatCache& cache)
     return cache.lstat_cached ? &cache.link_stat : nullptr;
 }
 
-std::size_t GetName(std::string fn /* modified, so operate on a copy */,
+std::size_t GetName(std::string_view fn,
                     const StatType &sta, std::size_t Space,
                     bool Fill, bool nameonly,
                     const char *hardlinkfn,
@@ -84,7 +84,11 @@ std::size_t GetName(std::string fn /* modified, so operate on a copy */,
     bool redone = false;
 #endif
 
-    std::string fn_print = nameonly ? std::string(NameOnly(fn)) : fn;
+    // The name is printed as a view; only a renamed link target or a
+    // relativised hardlink needs storage of its own.
+    std::string fn_owned;
+    std::string fn_print_owned;
+    std::string_view fn_print = nameonly ? NameOnly(fn) : fn;
 #ifdef S_ISLNK
 Redo:
 #endif
@@ -181,8 +185,9 @@ Redo:
             }
 
             // Unfixed link text, read with the same readlink call.
-            fn       = std::string(target_info.unfixed);
-            fn_print = fn;
+            fn_owned.assign(target_info.unfixed);
+            fn       = fn_owned;
+            fn_print = fn_owned;
             Stat = &LinkStat;
             redone = true;
             goto Redo;
@@ -201,7 +206,8 @@ Redo:
         GetModeColor(ColorMode::INFO, '&');
         PrintIfRoom(HLinkArrow);
 
-        fn_print = Relativize(fn, hardlinkfn);
+        fn_print_owned = Relativize(fn, hardlinkfn);
+        fn_print = fn_print_owned;
 
         if (auto hardlink_stat = try_stat(hardlinkfn); hardlink_stat)
             HardlinkStat = *hardlink_stat;
