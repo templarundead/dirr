@@ -17,14 +17,15 @@ int Links;
 
 LinkTargetInfo LinkTargetCached(std::string_view link, LinkTargetStatCache& cache)
 {
-    // A different source path (a link target that is itself a link, or a
-    // hardlink target) invalidates the entry.
-    if(!cache.target_initialized || cache.source != link)
+    // The cache belongs to one item, and GetName() only uses it before it
+    // re-enters with a link target, so the entry always describes the item's
+    // own path and only has to be filled once.
+    (void)link;
+    if(!cache.target_initialized)
     {
         std::string unfixed_target;
         cache.fixed_target = LinkTarget(std::string(link), true, &unfixed_target);
         cache.link_target  = std::move(unfixed_target);
-        cache.source       = std::string(link);
         cache.target_initialized = true;
         cache.stat_cached  = false;
         cache.lstat_cached = false;
@@ -32,32 +33,33 @@ LinkTargetInfo LinkTargetCached(std::string_view link, LinkTargetStatCache& cach
     return LinkTargetInfo{ cache.link_target, cache.fixed_target };
 }
 
-const StatType* LinkTargetStatCached(LinkTargetStatCache& cache)
+const StatSummary* LinkTargetStatCached(LinkTargetStatCache& cache)
 {
     if(!cache.stat_cached)
     {
         // Failures are not memoised; a later call simply retries, as before.
         if(auto target = try_stat(cache.fixed_target); target)
         {
-            cache.target_stat = *target;
-            cache.target_mode = target->st_mode;
+            cache.target = StatSummary{*target};
             cache.stat_cached = true;
         }
     }
-    return cache.stat_cached ? &cache.target_stat : nullptr;
+    return cache.stat_cached ? &cache.target : nullptr;
 }
 
-const StatType* LinkTargetLstatCached(LinkTargetStatCache& cache)
+bool LinkTargetLstatCached(LinkTargetStatCache& cache, mode_t& link_mode)
 {
     if(!cache.lstat_cached)
     {
         if(auto link = try_lstat(cache.fixed_target); link)
         {
-            cache.link_stat = *link;
+            cache.link_mode = link->st_mode;
             cache.lstat_cached = true;
         }
     }
-    return cache.lstat_cached ? &cache.link_stat : nullptr;
+    if(!cache.lstat_cached) return false;
+    link_mode = cache.link_mode;
+    return true;
 }
 
 std::size_t GetName(std::string_view fn,
@@ -66,9 +68,9 @@ std::size_t GetName(std::string_view fn,
                     const char *hardlinkfn,
                     LinkTargetStatCache* link_stat_cache)
 {
-    const StatType *Stat = &sta;
-    // The formatter re-enters Redo with these records. Keep them alive for the
-    // full call instead of pointing at temporaries inside the link branches.
+    // Only the mode is ever needed here; the full records below are what the
+    // attribute lookups and the redo paths expect.
+    mode_t StatMode = sta.st_mode;
     StatType LinkStat{};
     StatType HardlinkStat{};
 
@@ -137,14 +139,14 @@ Redo:
     else
     {
         #ifdef S_ISSOCK
-        if(S_ISSOCK(Stat->st_mode)) PutSet('=');
+        if(S_ISSOCK(StatMode)) PutSet('=');
         #endif
         #ifdef S_ISFIFO
-        if(S_ISFIFO(Stat->st_mode)) PutSet('|');
+        if(S_ISFIFO(StatMode)) PutSet('|');
         #endif
     }
     #ifdef S_ISLNK
-    if(!wasinvalid && S_ISLNK(Stat->st_mode))
+    if(!wasinvalid && S_ISLNK(StatMode))
     {
         if(Links >= 2 && maysublink)
         {
@@ -159,25 +161,26 @@ Redo:
             // Probe the followed target first, then fall back to its link metadata.
             mode_t target_mode{};
             bool target_found = false;
-            if (const StatType* target = LinkTargetStatCached(cache)) {
-                target_mode = target->st_mode;
+            if (const StatSummary* target = LinkTargetStatCached(cache)) {
+                target_mode = target->mode;
                 target_found = true;
             }
 
             if (!target_found) {
-                if (const StatType* link = LinkTargetLstatCached(cache); !link) {
+                mode_t link_mode{};
+                if (!LinkTargetLstatCached(cache, link_mode)) {
                     wasinvalid = true;
                     if (remaining_space > 0) GetModeColor(ColorMode::TYPE, '?');
                 } else {
-                    LinkStat = *link;
+                    LinkStat.st_mode = link_mode;
                     if (remaining_space > 0) GetModeColor(ColorMode::TYPE, 'l');
                 }
                 maysublink = false;
             } else {
                 LinkStat.st_mode = target_mode;
                 if (remaining_space > 0) {
-                    if (const StatType* link = LinkTargetLstatCached(cache);
-                       link && S_ISLNK(link->st_mode))
+                    mode_t link_mode{};
+                    if (LinkTargetLstatCached(cache, link_mode) && S_ISLNK(link_mode))
                         GetModeColor(ColorMode::TYPE, 'l');
                     else
                         SetAttr(GetNameAttr(LinkStat, target_info.fixed));
@@ -188,7 +191,7 @@ Redo:
             fn_owned.assign(target_info.unfixed);
             fn       = fn_owned;
             fn_print = fn_owned;
-            Stat = &LinkStat;
+            StatMode = LinkStat.st_mode;
             redone = true;
             goto Redo;
         }
@@ -197,8 +200,8 @@ Redo:
     else if(!wasinvalid)
     #endif
     {
-        if(S_ISDIR(Stat->st_mode))     PutSet('/');
-        else if(Stat->st_mode & 00111) PutSet('*'); // Executable by someone
+        if(S_ISDIR(StatMode))     PutSet('/');
+        else if(StatMode & 00111) PutSet('*'); // Executable by someone
     }
 
     if(hardlinkfn && (remaining_space > 0 || over_budget))
@@ -213,7 +216,7 @@ Redo:
             HardlinkStat = *hardlink_stat;
         SetAttr(GetNameAttr(HardlinkStat, NameOnly(hardlinkfn)));
         hardlinkfn = NULL;
-        Stat = &HardlinkStat;
+        StatMode = HardlinkStat.st_mode;
 
         maysublink = false;
         wasinvalid = false;
