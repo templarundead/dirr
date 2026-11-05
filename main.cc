@@ -411,17 +411,17 @@ static void TellMe(const StatType &Stat, std::string&& Name
             }
             case FieldInfo::size:
             {
-                ItemLen += Gwrite(GetSize(Name, Stat, f.info ? Limits.Size : 0, 0));
+                ItemLen += Gwrite(GetSize(Name, Stat, f.info ? Limits.Size : 0, 0, link_stat_cache));
                 break;
             }
             case FieldInfo::size_compact:
             {
-                ItemLen += Gwrite(GetSize(Name, Stat, f.info ? Limits.SizeCompact : 0, -1));
+                ItemLen += Gwrite(GetSize(Name, Stat, f.info ? Limits.SizeCompact : 0, -1, link_stat_cache));
                 break;
             }
             case FieldInfo::size_sep:
             {
-                ItemLen += Gwrite(GetSize(Name, Stat, (f.info & 0x80) ? Limits.SizeWithSeps : 0, char(f.info & 0x7F)));
+                ItemLen += Gwrite(GetSize(Name, Stat, (f.info & 0x80) ? Limits.SizeWithSeps : 0, char(f.info & 0x7F), link_stat_cache));
                 break;
             }
             case FieldInfo::datetime:
@@ -736,14 +736,24 @@ static void UpdateEstimations(Estimation& Limits, const std::string& name, const
                                        link_stat_cache.get()));
     }
 
+#ifdef S_ISLNK
+    // Size of a followed link target is resolved through the same cache the
+    // name field uses, so estimate and render passes share one stat().
+    if(!link_stat_cache && S_ISLNK(Stat.st_mode) && SizeUsesLinkTarget()
+       && (FieldsToPrint.used[FieldInfo::size]
+           || FieldsToPrint.used[FieldInfo::size_compact]
+           || FieldsToPrint.used[FieldInfo::size_sep]))
+        link_stat_cache = std::make_unique<LinkTargetStatCache>();
+#endif
+
     if(FieldsToPrint.used[FieldInfo::size])
-        Limits.Size = std::max(Limits.Size, GetSize(name, Stat, 0, 0).size());
+        Limits.Size = std::max(Limits.Size, GetSize(name, Stat, 0, 0, link_stat_cache.get()).size());
 
     if(FieldsToPrint.used[FieldInfo::size_compact])
-        Limits.SizeCompact  = std::max(Limits.SizeCompact,  GetSize(name, Stat, 0, -1).size());
+        Limits.SizeCompact  = std::max(Limits.SizeCompact,  GetSize(name, Stat, 0, -1, link_stat_cache.get()).size());
 
     if(FieldsToPrint.used[FieldInfo::size_sep])
-        Limits.SizeWithSeps = std::max(Limits.SizeWithSeps, GetSize(name, Stat, 0, '\'').size());
+        Limits.SizeWithSeps = std::max(Limits.SizeWithSeps, GetSize(name, Stat, 0, '\'', link_stat_cache.get()).size());
 
     if(FieldsToPrint.used[FieldInfo::nrlinks])
         Limits.Links = std::max(Limits.Links, WithLinkCountText(Stat.st_nlink,

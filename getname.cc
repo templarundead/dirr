@@ -15,6 +15,51 @@ static const char HLinkArrow[] = " = ";
 int Links;
 #endif
 
+LinkTargetInfo LinkTargetCached(const std::string& link, LinkTargetStatCache& cache)
+{
+    // A different source path (a link target that is itself a link, or a
+    // hardlink target) invalidates the entry.
+    if(!cache.target_initialized || cache.source != link)
+    {
+        std::string unfixed_target;
+        cache.fixed_target = LinkTarget(link, true, &unfixed_target);
+        cache.link_target  = std::move(unfixed_target);
+        cache.source       = link;
+        cache.target_initialized = true;
+        cache.stat_cached  = false;
+        cache.lstat_cached = false;
+    }
+    return LinkTargetInfo{ cache.link_target, cache.fixed_target };
+}
+
+const StatType* LinkTargetStatCached(LinkTargetStatCache& cache)
+{
+    if(!cache.stat_cached)
+    {
+        // Failures are not memoised; a later call simply retries, as before.
+        if(auto target = try_stat(cache.fixed_target); target)
+        {
+            cache.target_stat = *target;
+            cache.target_mode = target->st_mode;
+            cache.stat_cached = true;
+        }
+    }
+    return cache.stat_cached ? &cache.target_stat : nullptr;
+}
+
+const StatType* LinkTargetLstatCached(LinkTargetStatCache& cache)
+{
+    if(!cache.lstat_cached)
+    {
+        if(auto link = try_lstat(cache.fixed_target); link)
+        {
+            cache.link_stat = *link;
+            cache.lstat_cached = true;
+        }
+    }
+    return cache.lstat_cached ? &cache.link_stat : nullptr;
+}
+
 std::size_t GetName(std::string fn /* modified, so operate on a copy */,
                     const StatType &sta, std::size_t Space,
                     bool Fill, bool nameonly,
@@ -33,6 +78,11 @@ std::size_t GetName(std::string fn /* modified, so operate on a copy */,
     bool estimating = (Space == 0);
     bool maysublink = true;
     bool wasinvalid = false;
+#ifdef S_ISLNK
+    // After a redo the name is no longer the item path, so the per-item cache
+    // must not be overwritten with the target's entry.
+    bool redone = false;
+#endif
 
     std::string fn_print = nameonly ? std::string(NameOnly(fn)) : fn;
 #ifdef S_ISLNK
@@ -97,35 +147,21 @@ Redo:
             if(remaining_space > 0) GetModeColor(ColorMode::INFO, '@');
             PrintIfRoom(SLinkArrow);
 
-            std::string unfixed_target;
-            std::string Buf = LinkTarget(fn, true, &unfixed_target);
-
-            if (link_stat_cache) {
-                if (!link_stat_cache->target_initialized
-                    || link_stat_cache->link_target != unfixed_target) {
-                    link_stat_cache->link_target = unfixed_target;
-                    link_stat_cache->target_initialized = true;
-                    link_stat_cache->stat_cached = false;
-                }
-            }
+            LinkTargetStatCache redo_cache;
+            LinkTargetStatCache& cache = (!redone && link_stat_cache) ? *link_stat_cache
+                                                                     : redo_cache;
+            const LinkTargetInfo target_info = LinkTargetCached(fn, cache);
 
             // Probe the followed target first, then fall back to its link metadata.
             mode_t target_mode{};
             bool target_found = false;
-            if (link_stat_cache && link_stat_cache->stat_cached) {
-                target_mode = link_stat_cache->target_mode;
-                target_found = true;
-            } else if (auto target = try_stat(Buf); target) {
+            if (const StatType* target = LinkTargetStatCached(cache)) {
                 target_mode = target->st_mode;
                 target_found = true;
-                if (link_stat_cache) {
-                    link_stat_cache->target_mode = target_mode;
-                    link_stat_cache->stat_cached = true;
-                }
             }
 
             if (!target_found) {
-                if (auto link = try_lstat(Buf); !link) {
+                if (const StatType* link = LinkTargetLstatCached(cache); !link) {
                     wasinvalid = true;
                     if (remaining_space > 0) GetModeColor(ColorMode::TYPE, '?');
                 } else {
@@ -136,16 +172,19 @@ Redo:
             } else {
                 LinkStat.st_mode = target_mode;
                 if (remaining_space > 0) {
-                    if (auto link = try_lstat(Buf); link && S_ISLNK(link->st_mode))
+                    if (const StatType* link = LinkTargetLstatCached(cache);
+                       link && S_ISLNK(link->st_mode))
                         GetModeColor(ColorMode::TYPE, 'l');
                     else
-                        SetAttr(GetNameAttr(LinkStat, Buf));
+                        SetAttr(GetNameAttr(LinkStat, target_info.fixed));
                 }
             }
 
-            fn       = std::move(unfixed_target); // Unfixed link, read with the same readlink call.
+            // Unfixed link text, read with the same readlink call.
+            fn       = std::string(target_info.unfixed);
             fn_print = fn;
             Stat = &LinkStat;
+            redone = true;
             goto Redo;
         }
         PutSet('@');

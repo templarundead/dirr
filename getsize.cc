@@ -28,8 +28,13 @@ static bool LinkFormatStatsOfTarget()
 {
     return Links==3 || Links==5;
 }
+bool SizeUsesLinkTarget()
+{
+    return LinkFormatStatsOfTarget();
+}
 
-std::string GetSize(const std::string &s, const StatType &Sta, std::size_t Space, int Seps)
+std::string GetSize(const std::string &s, const StatType &Sta, std::size_t Space, int Seps,
+                    LinkTargetStatCache* link_stat_cache)
 {
     const StatType *Stat = &Sta;
 #ifdef S_ISLNK
@@ -79,8 +84,11 @@ P1:
         {
             if(LinkFormatStatsOfTarget())
             {
-                const std::string target_path = LinkTarget(s, true);
-                if (auto target = try_stat(target_path); target) {
+                // Reuse the link resolution the name field already did.
+                LinkTargetStatCache local_cache;
+                LinkTargetStatCache& cache = link_stat_cache ? *link_stat_cache : local_cache;
+                (void)LinkTargetCached(s, cache);
+                if (const StatType* target = LinkTargetStatCached(cache)) {
                     target_stat = *target;
                     Stat = &target_stat;
                     goto GotSize;
