@@ -680,6 +680,19 @@ static void ResetEstimations()
     if(!PreScan) EstimateFields();
 }
 
+static void MergeEstimations(Estimation& Limits, const Estimation& Item)
+{
+    Limits.Name         = std::max(Limits.Name,         Item.Name);
+    Limits.Size         = std::max(Limits.Size,         Item.Size);
+    Limits.SizeWithSeps = std::max(Limits.SizeWithSeps, Item.SizeWithSeps);
+    Limits.SizeCompact  = std::max(Limits.SizeCompact,  Item.SizeCompact);
+    Limits.UIDname      = std::max(Limits.UIDname,      Item.UIDname);
+    Limits.UIDnumber    = std::max(Limits.UIDnumber,    Item.UIDnumber);
+    Limits.GIDname      = std::max(Limits.GIDname,      Item.GIDname);
+    Limits.GIDnumber    = std::max(Limits.GIDnumber,    Item.GIDnumber);
+    Limits.Links        = std::max(Limits.Links,        Item.Links);
+}
+
 static void UpdateEstimations(Estimation& Limits, const std::string& name, const StatType& Stat)
 {
     if(!S_ISDIR(Stat.st_mode)) Inodemap.insert(Stat.st_dev, Stat.st_ino, name);
@@ -736,10 +749,15 @@ static void PrintAllFilesCollectedSoFar()
         // Check how many columns we can get away with.
         // Try to get the shortest number of lines.
 
+        // Estimate each item once; the binary search below revisits the same files.
+        std::vector<Estimation> ItemEstimates(f.size());
+        for(std::size_t a = 0; a < f.size(); ++a)
+            UpdateEstimations(ItemEstimates[a], f[a].Name, f[a].Stat);
+
         // Using binary search, find the shortest number of lines
         // where printing still works.
         std::size_t columns = 0;
-        auto acceptable = [&columns](std::size_t lines)
+        auto acceptable = [&columns, &ItemEstimates](std::size_t lines)
         {
             Longest.clear();
             std::size_t column = 1, line = 0, total_width = 0;
@@ -750,7 +768,7 @@ static void PrintAllFilesCollectedSoFar()
             for(std::size_t a=0; a<f.size(); ++a)
             {
                 if(line == 0) Longest.emplace_back(); // add column
-                UpdateEstimations(Longest.back(), f[a].Name, f[a].Stat);
+                MergeEstimations(Longest.back(), ItemEstimates[a]);
                 const std::size_t width = CalculateRowWidth(Longest.back(), true);
                 //printf("item %zu on line %zu column %zu: column width now %zu+%zu\n", a, line,column, total_width, width);
                 if(column > 1
