@@ -35,11 +35,15 @@
     return {};
 }
 
-[[nodiscard]] std::string LinkTarget(const std::string& link, bool fixit) {
+[[nodiscard]] std::string LinkTarget(const std::string& link, bool fixit,
+                                     std::string* unfixed_target) {
     // Use a bounded buffer; construct the result with an explicit byte count.
     std::array<char, PATH_MAX + 1> buf{};
     const auto len = ::readlink(link.c_str(), buf.data(), static_cast<std::size_t>(PATH_MAX));
     const std::size_t length = (len < 0) ? 0 : static_cast<std::size_t>(len);
+
+    if (unfixed_target)
+        unfixed_target->assign(buf.data(), length);
 
     if (!fixit || (length > 0 && buf[0] == '/')) {
         return std::string(buf.data(), length);

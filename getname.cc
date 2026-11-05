@@ -6,6 +6,8 @@
 #include "colouring.hh"
 #include "cons.hh"
 
+#include <utility>
+
 static const char SLinkArrow[] = " -> ";
 static const char HLinkArrow[] = " = ";
 
@@ -94,7 +96,8 @@ Redo:
             if(remaining_space > 0) GetModeColor(ColorMode::INFO, '@');
             PrintIfRoom(SLinkArrow);
 
-            std::string Buf = LinkTarget(fn, true);
+            std::string unfixed_target;
+            std::string Buf = LinkTarget(fn, true, &unfixed_target);
 
             // Probe the followed target first, then fall back to its link metadata.
             if (auto target = try_stat(Buf); !target) {
@@ -116,7 +119,7 @@ Redo:
                 }
             }
 
-            fn       = LinkTarget(fn, false); // Unfixed link.
+            fn       = std::move(unfixed_target); // Unfixed link, read with the same readlink call.
             fn_print = fn;
             Stat = &LinkStat;
             goto Redo;

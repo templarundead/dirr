@@ -12,7 +12,7 @@
 | --- | --- |
 | F1 | Confirmed structurally and optimized in this draft: per-item widths are computed once and reused during the vertical-layout binary search. |
 | F2 | Partially confirmed: width estimation and rendering can repeat field work; the cost depends on selected fields and layout. |
-| F3 | Partially confirmed: the `Links >= 2` symlink branch can issue multiple `readlink`/`stat`/`lstat` calls; the report's per-entry totals are not universal. |
+| F3 | Partially confirmed and optimized structurally: the `Links >= 2` branch now reuses one `readlink` result; `stat`/`lstat` counts remain path-dependent. |
 | F4 | Confirmed structurally: `Inodemap` receives every non-directory passed to `UpdateEstimations`, without an `st_nlink > 1` check. |
 | F5 | Character-at-a-time output path confirmed; syscall savings from `setvbuf` are not established. |
 | F6 | The stated locale-based explanation is not supported by the current formatter; numeric stream formatting remains a separate optimization hypothesis. |
@@ -28,7 +28,7 @@
 
 ### F1 — repeated width estimation
 
-At the reviewed baseline, `PrintAllFilesCollectedSoFar()` used a binary search to choose the vertical layout, and each `acceptable()` attempt called `UpdateEstimations()` for the items it visited. The accepted layout was evaluated once more before rendering. This draft now computes one `Estimation` per sorted item before the search and merges those cached widths into each column during each attempt, avoiding repeated calls to `GetName()`, `GetSize()`, and owner/group lookup from the search loop. The `TellMe()` rendering path and width rules are unchanged. See the F1 implementation in `main.cc:683–694` and `main.cc:752–772`; the surrounding search is in `main.cc:747–803`, with rendering in `main.cc:371–451`.
+At the reviewed baseline, `PrintAllFilesCollectedSoFar()` used a binary search to choose the vertical layout, and each `acceptable()` attempt called `UpdateEstimations()` for the items it visited. The accepted layout was evaluated once more before rendering. This draft now computes one `Estimation` per sorted item before the search and merges those cached widths into each column during each attempt, avoiding repeated calls to `GetName()`, `GetSize()`, owner/group lookup, and `Inodemap.insert()` from the search loop. The `TellMe()` rendering path and width rules are unchanged. See the F1 implementation in `main.cc:683–694` and `main.cc:752–772`; the surrounding search is in `main.cc:747–803`, with rendering in `main.cc:371–451`.
 
 ### F2 — estimation work repeated by rendering
 
@@ -36,11 +36,11 @@ At the reviewed baseline, `PrintAllFilesCollectedSoFar()` used a binary search t
 
 ### F3 — symlink resolution
 
-In `GetName()`, when `Links >= 2` and the sublink path is enabled, `LinkTarget()` is called before and after target inspection. Each call uses `readlink()`. The branch also calls `stat()` and may call `lstat()`—including a color/metadata probe on a successfully followed target. Thus this branch can reach four direct filesystem syscalls for one `GetName()` invocation, but fewer calls are possible depending on path outcome and output budget. This is not a universal count for every listed symlink, and additional code paths (for example size formatting) are separate. See `getname.cc:90–122`, `strfun.cc:38–54`, and `stat.h:30–65`.
+At the reviewed baseline, `GetName()` called `LinkTarget()` before and after target inspection when `Links >= 2`, producing two `readlink()` calls plus `stat()` and a conditional `lstat()`. This draft passes an optional output string to `LinkTarget()`, allowing the fixed target path used for metadata and the raw target used for rendering to come from the same readlink buffer. The branch therefore saves one `readlink()`; the `stat()`/`lstat()` behavior remains conditional, and other paths (such as size formatting) are unchanged. The result is reused only within one `GetName()` call. See the current implementation at `getname.cc:92–125`, `strfun.cc:38–59`, and `stat.h:30–65`.
 
 ### F4 — inode-map insertions
 
-`UpdateEstimations()` inserts every non-directory into `Inodemap`; `Inodemap::insert()` checks only whether the map is enabled and whether the key is already present. There is no `st_nlink > 1` guard, so unique files can incur lookup/insertion work and retain a path in the map. The actual impact depends on whether the map is enabled and the directory contents. See `main.cc:225–266` and `main.cc:696–704`.
+`UpdateEstimations()` inserts every non-directory into `Inodemap`; `Inodemap::insert()` checks only whether the map is enabled and whether the key is already present. A blanket `st_nlink > 1` guard is not applied: with `-l0`, several symlink paths to the same single-link target currently share the target inode and can produce hardlink annotations, so skipping those entries would change existing output. The F1 cache does avoid repeating these insert attempts across vertical-layout trials. See `main.cc:225–266` and `main.cc:696–704`.
 
 ### F5 — character-at-a-time output
 
@@ -80,14 +80,20 @@ The width estimator handles `%u` and `%z` as fixed widths; for other formats it 
 
 ### F1 — reuse per-item width estimates
 
-The vertical layout now builds an `Estimation` vector once in directory order and merges those per-item widths into the candidate column maxima during the binary search. This retains the existing `Inodemap` insertion order and leaves the rendering logic unchanged. No CLI option, default, output format, sorting, palette, or paging behavior was intentionally changed.
+The vertical layout now builds an `Estimation` vector once in directory order and merges those per-item widths into the candidate column maxima during the binary search. This retains the existing `Inodemap` insertion order and leaves the rendering logic unchanged.
+
+### F3 — reuse symlink target read
+
+`GetName()` now obtains the fixed path used for target metadata and the raw link target used for display from one `readlink()` call. It preserves the existing conditional `stat()`/`lstat()` probes and only reuses data within that `GetName()` invocation.
+
+No CLI option, default, output format, sorting, palette, or paging behavior was intentionally changed.
 
 ## Validation and limitations
 
-For the F1 candidate, the local Release build and the Debug ASan/UBSan build each passed all 15 CTest tests. These supplementary builds used CMake 4.4.4 and GCC 12.2.0; the latter is below the requested GCC 14 floor, so this does not replace the GCC 14+ CI matrix.
+For the F1 and F3 candidates, local Release builds and Debug ASan/UBSan builds each passed all 15 CTest tests. These supplementary builds used CMake 4.4.4 and GCC 12.2.0; the latter is below the requested GCC 14 floor, so they do not replace the GCC 14+ CI matrix.
 
-Byte comparisons against the baseline were identical for aliases `-a0` through `-a6` on a fixture containing hidden files, a directory, a hardlink, and valid, absolute, and dangling symlinks. A separate `-C -vc` vertical-layout output comparison was also byte-identical.
+Byte comparisons were identical for aliases `-a0` through `-a6` on a fixture containing hidden files, a directory, a hardlink, and valid, absolute, dangling, directory, and chained symlinks. Explicit `-l0` through `-l5` were also compared after the aliases (42 combinations); a separate vertical-layout comparison with link modes 2, 3, and 5 was byte-identical.
 
-A local 6,000-entry vertical-layout microbenchmark (3 warm-ups, 15 alternating timed runs per version, same host) measured median wall time of 43.4 ms for baseline and 29.0 ms for the F1 candidate (33.3% lower). This is indicative only: the samples include scheduler noise, and this fixture/timing method is not a substitute for the CI profiler.
+A local 6,000-entry vertical-layout microbenchmark (3 warm-ups, 15 alternating timed runs per version, same host) measured median wall time of 43.4 ms for baseline and 29.0 ms for the F1 candidate (33.3% lower). This is indicative only: the samples include scheduler noise, and this fixture/timing method is not a substitute for the CI profiler. A separate 10,000-symlink probe observed 139.0 ms vs. 127.4 ms for `-l3`, but the `-l0` control also varied; no attributable F3 wall-time gain is claimed from that run.
 
-`scripts/profile-hot-path.sh` was run with baseline and candidate binaries, but its local report marked Hyperfine, perf, strace, and Heaptrack as `NOT RUN` because those tools are not installed. The PR's GitHub profiling workflow is therefore still needed for its baseline-versus-candidate probe. CMake was installed outside the repository for local validation; no project dependency or workflow was added or changed.
+`scripts/profile-hot-path.sh` ran locally with baseline/candidate binaries, but Hyperfine, perf, strace, and Heaptrack were unavailable, so the script recorded `NOT RUN` for those probes. The configured PR profiling workflow builds base and head identically, runs the same script with its profiling tools, and uploads a report artifact for each push. CMake was installed outside the repository for local validation; no project dependency or workflow was added or changed.

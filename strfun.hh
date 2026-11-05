@@ -32,7 +32,8 @@
 
 std::string_view NameOnly(std::string_view path) noexcept;
 std::string_view DirOnly(std::string_view path) noexcept;
-std::string LinkTarget(const std::string& link, bool fixit = false);
+std::string LinkTarget(const std::string& link, bool fixit = false,
+                       std::string* unfixed_target = nullptr);
 std::string GetError(int err);
 std::string Relativize(std::string_view base, std::string_view name);
 inline std::string RelativizePath(const std::filesystem::path& base,
