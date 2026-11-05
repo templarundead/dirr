@@ -289,7 +289,7 @@ static void TellMe(const StatType &Stat, std::string&& Name
 #ifdef DJGPP
     , unsigned int dosattr
 #endif
-    )
+    , LinkTargetStatCache* link_stat_cache)
 {
     std::string OwNum,GrNum,OwNam,GrNam;
     std::size_t ItemLen = 0;
@@ -401,7 +401,8 @@ static void TellMe(const StatType &Stat, std::string&& Name
                 bool nameonly = f.info;
                 if(!nameonly && Name.rfind('/')==1 && Name.substr(0,2)=="./") nameonly = true;
                 const auto name_width = GetName(Name, Stat, Limits.Name,
-                                                MultiColumn || f.info, nameonly, hardlinkfn);
+                                                MultiColumn || f.info, nameonly, hardlinkfn,
+                                                link_stat_cache);
                 ItemLen += std::max(name_width, Limits.Name);
                 break;
             }
@@ -507,6 +508,7 @@ public:
     unsigned dosattr;
     #endif
     std::string Name;
+    std::unique_ptr<LinkTargetStatCache> LinkStatCache{};
 public:
     StatItem(const StatType &t,
     #ifdef DJGPP
@@ -518,10 +520,10 @@ public:
     #endif
                                 Name(std::move(n)) { }
 
-    StatItem(StatItem&&) = default;
-    StatItem(const StatItem&) = default;
-    StatItem& operator=(StatItem&&) = default;
-    StatItem& operator=(const StatItem&) = default;
+    StatItem(StatItem&&) noexcept = default;
+    StatItem(const StatItem&) = delete;
+    StatItem& operator=(StatItem&&) noexcept = default;
+    StatItem& operator=(const StatItem&) = delete;
 
     /* Returns the class code for grouping sort */
     int Class(int LinksAreFiles) const
@@ -712,7 +714,8 @@ static void MergeEstimations(Estimation& Limits, const Estimation& Item)
     Limits.Links        = std::max(Limits.Links,        Item.Links);
 }
 
-static void UpdateEstimations(Estimation& Limits, const std::string& name, const StatType& Stat)
+static void UpdateEstimations(Estimation& Limits, const std::string& name, const StatType& Stat,
+                              std::unique_ptr<LinkTargetStatCache>& link_stat_cache)
 {
     if(!S_ISDIR(Stat.st_mode)) Inodemap.insert(Stat.st_dev, Stat.st_ino, name);
 
@@ -720,7 +723,13 @@ static void UpdateEstimations(Estimation& Limits, const std::string& name, const
     {
         const char *hardlinkfn = Inodemap.get(Stat.st_dev, Stat.st_ino);
         if(hardlinkfn && name == hardlinkfn) hardlinkfn = nullptr;
-        Limits.Name = std::max(Limits.Name, GetName(name, Stat, 0, false, true, hardlinkfn));
+#ifdef S_ISLNK
+        if(Links >= 2 && S_ISLNK(Stat.st_mode) && !link_stat_cache)
+            link_stat_cache = std::make_unique<LinkTargetStatCache>();
+#endif
+        Limits.Name = std::max(Limits.Name,
+                               GetName(name, Stat, 0, false, true, hardlinkfn,
+                                       link_stat_cache.get()));
     }
 
     if(FieldsToPrint.used[FieldInfo::size])
@@ -772,7 +781,7 @@ static void PrintAllFilesCollectedSoFar()
         // Estimate each item once; the binary search below revisits the same files.
         std::vector<Estimation> ItemEstimates(f.size());
         for(std::size_t a = 0; a < f.size(); ++a)
-            UpdateEstimations(ItemEstimates[a], f[a].Name, f[a].Stat);
+            UpdateEstimations(ItemEstimates[a], f[a].Name, f[a].Stat, f[a].LinkStatCache);
 
         // Using binary search, find the shortest number of lines
         // where printing still works.
@@ -836,7 +845,7 @@ static void PrintAllFilesCollectedSoFar()
                 #ifdef DJGPP
                        , tmp.dosattr
                 #endif
-                      );
+                       , tmp.LinkStatCache.get());
             }
             if(CurrentColumn) { Gputch('\n'); RowLen=0; CurrentColumn=0; }
         }
@@ -845,7 +854,7 @@ static void PrintAllFilesCollectedSoFar()
     else
     {
         for(StatItem& tmp: f)
-            UpdateEstimations(Longest.front(), tmp.Name, tmp.Stat);
+            UpdateEstimations(Longest.front(), tmp.Name, tmp.Stat, tmp.LinkStatCache);
         EstimateFields(); // Make sure the file name remains clipped
 
         RowLen=0;
@@ -856,7 +865,7 @@ static void PrintAllFilesCollectedSoFar()
             #ifdef DJGPP
                    , tmp.dosattr
             #endif
-                  );
+                   , tmp.LinkStatCache.get());
         }
         Dumping = false;
     }
@@ -901,12 +910,13 @@ static void SingleFile(string&& Buffer)
                 std::move(Buffer));
         } else {
             Dumping = true;
-            UpdateEstimations(Longest.front(), Buffer, Stat);
+            std::unique_ptr<LinkTargetStatCache> LinkStatCache;
+            UpdateEstimations(Longest.front(), Buffer, Stat, LinkStatCache);
             TellMe(Stat, std::move(Buffer)
 #ifdef DJGPP
                    , attr
 #endif
-                  );
+                   , LinkStatCache.get());
             Dumping = false;
         }
     }

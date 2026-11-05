@@ -18,7 +18,8 @@ int Links;
 std::size_t GetName(std::string fn /* modified, so operate on a copy */,
                     const StatType &sta, std::size_t Space,
                     bool Fill, bool nameonly,
-                    const char *hardlinkfn)
+                    const char *hardlinkfn,
+                    LinkTargetStatCache* link_stat_cache)
 {
     const StatType *Stat = &sta;
     // The formatter re-enters Redo with these records. Keep them alive for the
@@ -99,8 +100,31 @@ Redo:
             std::string unfixed_target;
             std::string Buf = LinkTarget(fn, true, &unfixed_target);
 
+            if (link_stat_cache) {
+                if (!link_stat_cache->target_initialized
+                    || link_stat_cache->link_target != unfixed_target) {
+                    link_stat_cache->link_target = unfixed_target;
+                    link_stat_cache->target_initialized = true;
+                    link_stat_cache->stat_cached = false;
+                }
+            }
+
             // Probe the followed target first, then fall back to its link metadata.
-            if (auto target = try_stat(Buf); !target) {
+            mode_t target_mode{};
+            bool target_found = false;
+            if (link_stat_cache && link_stat_cache->stat_cached) {
+                target_mode = link_stat_cache->target_mode;
+                target_found = true;
+            } else if (auto target = try_stat(Buf); target) {
+                target_mode = target->st_mode;
+                target_found = true;
+                if (link_stat_cache) {
+                    link_stat_cache->target_mode = target_mode;
+                    link_stat_cache->stat_cached = true;
+                }
+            }
+
+            if (!target_found) {
                 if (auto link = try_lstat(Buf); !link) {
                     wasinvalid = true;
                     if (remaining_space > 0) GetModeColor(ColorMode::TYPE, '?');
@@ -110,7 +134,7 @@ Redo:
                 }
                 maysublink = false;
             } else {
-                LinkStat = *target;
+                LinkStat.st_mode = target_mode;
                 if (remaining_space > 0) {
                     if (auto link = try_lstat(Buf); link && S_ISLNK(link->st_mode))
                         GetModeColor(ColorMode::TYPE, 'l');
