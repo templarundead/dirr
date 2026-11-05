@@ -14,7 +14,7 @@
 | F2 | Confirmed structurally and partly optimized. Repeated symlink resolution and per-call name copies are removed, and passwd/group repeats now stay out of the shared map; the duplicated size-column formatting was measured at ≤0.5% and deliberately left unchanged (see the F2 follow-up section). |
 | F3 | Confirmed structurally and optimized: readlink reuse measured 7.12–9.18% lower mean wall time in the earlier AArch64 comparison; a successful-target-stat cache reduced a local 50k-link workload by 9.62% mean wall time and halved target `stat()` calls. Both results are fixture-specific. |
 | F4 | Confirmed structurally: `Inodemap` receives every non-directory passed to `UpdateEstimations`, without an `st_nlink > 1` check. |
-| F5 | Confirmed and optimized in this draft: the per-character `putchar()` call is replaced by the inlined, lock-free `putc_unlocked()`, measured at 3.5–8.1% lower CPU time. An own 64 KiB output buffer was also implemented and measured: it packs the stdio calls but does not lower CPU time (`+0.6…+1.1%`), so it was rejected. `setvbuf()` is not needed; syscall counts were never the cost. |
+| F5 | Confirmed and optimized in this draft: the per-character `putchar()` call is replaced by the inlined, lock-free `putc_unlocked()`, measured at 3.5–8.1% lower CPU time. An own 64 KiB output buffer was also implemented and measured: it packs the stdio calls but does not lower CPU time (`+0.6…+1.1%`), so it was rejected. The width formatter now also skips its UTF-8 decoding for runs of printable ASCII, measured at 4.7–12.5% lower CPU time. `setvbuf()` is not needed; syscall counts were never the cost. |
 | F6 | The stated locale-based explanation is not supported by the current formatter. A `to_chars` trial for link counts showed no measurable speedup on the corrected local benchmark. |
 | F7 | Confirmed for the legacy `Gprintf` path: a `PrintfProxy` parses the format on each invocation. `Gformat` bypasses it when available. |
 | F8 | The supplied date-cost estimates are overstated or describe the wrong branches; a corrected local date-width benchmark measured 31.54% lower mean wall time on its targeted workload. |
@@ -112,6 +112,8 @@ When the active sort string contains `c` or `C`, the pre-sort pass computes each
 ### F5 — unlock the per-character output path
 
 dirr writes from a single thread, so the `FILE` locking that `putchar()` and `fwrite()` perform buys nothing. `Gputch()` now emits characters with `putc_unlocked()`, and the padding-run and attribute-escape writes use `fwrite_unlocked()`; both are available under `-std=c++23` with glibc and expand to inline buffer stores, so the per-character call does not even reach the PLT in the Release build. `FlushSetAttr()` already returns immediately when the attributes match, so `Gputch()` now tests that condition itself instead of calling through on every character. The DJGPP console path (`putch`/`putchar`) is unchanged.
+
+`WidthPrintHelper()` — the single formatter behind `Gwrite()`, `WidthPrint()` and `WidthInColumns()` — used to run every byte of a name through `ParseUTF8()` and then through the unprintable-character rules. A run of bytes in `32…0x7E` now consumes one column per byte directly, and the general path is entered at the first byte that is not printable ASCII. Multi-byte sequences, surrogate pairs, control bytes, double-wide accounting and truncation are unchanged.
 
 No CLI option, default, output format, sorting order, palette, or paging behavior was intentionally changed.
 
@@ -300,5 +302,23 @@ A 64 KiB output buffer inside `cons.cc` — a single `Emit`/`EmitChar`/`FlushOut
 | 20k symlinks, `-l3` | +0.59% | −1.63% |
 
 The reason is the same measurement that motivated the unlocked call: after `b35b4ef`, `putc_unlocked()` is already an inline pointer store into the stdio buffer, so a second buffer adds two branches per byte and removes nothing. The experiment also produced a real ordering hazard rather than a theoretical one: the default build defines neither `ColourPrints` nor `HAVE_PRINT`, so `argh.cc` writes the `--help` option list to `stdout` with a direct `std::fwrite()`, which overtook the still-buffered copyright header and moved it to the end of the output. The hazard is fixable with a flush hook (that fix was written and verified), but a change that is neutral in time and adds a correctness constraint does not belong in the branch, so it was reverted. The commit `b35b4ef` is the whole of this series.
+
+### F5 follow-up: printable-ASCII fast path in the width formatter (2026-11-05)
+
+`WidthPrintHelper()` is the only path that both measures and emits a name: `Gwrite()` and `WidthPrint()` call it with `print = true`, `WidthInColumns()` estimates with `print = false`. Every byte therefore paid for a `ParseUTF8()` call — a callback with a bounds check, a four-way length test and a `mincode` switch — only to be recognised as a single-byte character and sent back through the unprintable-character rules.
+
+The formatter now scans a run of bytes in `32…0x7E`, counts one column per byte and emits them directly; the first byte outside that range re-enters the existing general path, which is unchanged for multi-byte sequences, surrogate pairs, control bytes, double-wide accounting and truncation.
+
+Same host, build and method as the F5 series: alternating A/B subprocess pairs against the previous commit (`b35b4ef`), five listings per sample, minimum and median over 20–25 rounds, reversed order repeated.
+
+| Workload | CPU min | CPU median | Wall min | Wall median |
+| --- | ---: | ---: | ---: | ---: |
+| 20k files, default | −6.83% | −5.39% | −6.49% | −5.75% |
+| 20k long names, default | −12.46% | −12.56% | −13.67% | −15.16% |
+| 20k symlinks, `-l3` | −4.67% | −10.24% | −7.93% | −8.07% |
+
+The reversed-order repeat (candidate as A) reported +7.71%/+5.67%, +14.18%/+17.23% and +7.83%/+7.25% CPU, i.e. the same candidate advantage. Long names gain most, as expected: the run is longer and the decoder is skipped more often. The symlink workload gains least because F3's syscall savings already dominate it, and because the link-target text adds bytes that were already cheap.
+
+Verification: 624 byte-for-byte comparisons of the previous commit against this one — `-a0`…`-a6` with `-A -c`, `-A -c -w`, `-A -c -C`, `-A -c -w -C`, `-A -C`, `-A -w -C` at `-X40`, `-X80` and `-X200`; `-l0`…`-l5`; `-e`; `-S`; `-X20`; a custom `--format`; and an attached `-f.f_.d_.h` field order — over the four fixtures plus a UTF-8 fixture holding 2-, 3- and 4-byte sequences, a combining mark, CESU-8 surrogate halves and a surrogate pair, lone and truncated invalid sequences, `0x01…0x1F`, `0x7F`, `0xA0…0xFF`, an embedded tab and newline, and 200-character names in ASCII, 2-byte and 3-byte forms. The 282 general comparisons also still match. Release and Debug/ASan+UBSan CTest pass 15/15, ASan/UBSan runs over all five fixtures are clean, and tty output through a pty is identical for the UTF-8, long-name and mixed fixtures.
 
 Verification for this series: Release and Debug/ASan+UBSan CTest pass 15/15; sanitizer runs over the four fixtures are clean; the 282 byte-for-byte comparisons of the reviewed baseline against the candidate (`-a0`…`-a6` with `-A -c`, `-w`, `-C`, `-w -C`; `-l0`…`-l5`; `-e`; `-S`; default and `-X40`) show no differences; tty output captured through a pty is identical apart from the live free-space figure; the pager (`-p`, answered with `q`, spaces and carriage returns) is identical including the `--More--` prompt and its erase sequence; `--help` is identical for both a pipe and a tty; `dirr | head -3` exits with the same status (141) in both; and a SIGINT delivered mid-listing leaves the same complete `^C`/sums/free-space tail in both. Hyperfine, perf, strace and Heaptrack remain unavailable on this host, so `scripts/profile-hot-path.sh` again recorded `NOT RUN` for them.
