@@ -90,13 +90,17 @@ The vertical layout now builds an `Estimation` vector once in directory order an
 
 When a date field is active, its estimate is now computed once after command-line options and fields are parsed. `CalculateRowWidth()` reuses that value instead of calling `strftime()` during every candidate-row calculation in vertical-layout search. The existing `%u` and `%z` widths are unchanged; other formats still estimate with a zero-initialized `tm`, and rendered dates are untouched.
 
+### Format link counts with `to_chars`
+
+When `HAVE_CHARCONV` is available, link-count width estimation and output use `std::to_chars()` into a stack buffer and pass the resulting view to `Gwrite()`. Builds without charconv retain the `std::to_string()` fallback. Decimal text and the existing field-padding path are unchanged.
+
 No CLI option, default, output format, sorting, palette, or paging behavior was intentionally changed.
 
 ## Validation and limitations
 
-For the F1 and F3 candidates, earlier local Release and Debug ASan/UBSan builds each passed all 15 CTest tests. The date-width candidate was separately built in Release (static + LTO) and Debug ASan/UBSan; both CTest runs also passed 15/15. These supplementary builds used GCC 12.2.0 (CMake 3.31.6 for the date-width candidate), below the requested GCC 14 floor, so they do not replace the GCC 14+ CI matrix.
+For the F1 and F3 candidates, earlier local Release and Debug ASan/UBSan builds each passed all 15 CTest tests. The date-width and link-count `to_chars` candidates were built together in Release (static + LTO) and Debug ASan/UBSan; both CTest runs passed 15/15. These supplementary builds used GCC 12.2.0 and CMake 3.31.6, below the requested GCC 14 floor, so they do not replace the GCC 14+ CI matrix.
 
-Byte comparisons were identical for aliases `-a0` through `-a6` on a fixture containing hidden files, a directory, a hardlink, and valid, absolute, dangling, directory, and chained symlinks. Explicit `-l0` through `-l5` were also compared after the aliases (42 combinations); a separate vertical-layout comparison with link modes 2, 3, and 5 was byte-identical. The date-width candidate also matched the baseline byte-for-byte for `-a0` through `-a6` and three custom `-F` date formats, including vertical layout.
+Byte comparisons were identical for aliases `-a0` through `-a6` on a fixture containing hidden files, a directory, a hardlink, and valid, absolute, dangling, directory, and chained symlinks. Explicit `-l0` through `-l5` were also compared after the aliases (42 combinations); a separate vertical-layout comparison with link modes 2, 3, and 5 was byte-identical. The date-width candidate also matched the baseline byte-for-byte for `-a0` through `-a6` and three custom `-F` date formats, including vertical layout. The link-count `to_chars` candidate was byte-identical to its parent for `-a0` through `-a6` and custom `.h`/`.h_.f` field layouts on a fixture with 120 hardlinks.
 
 A local 6,000-entry vertical-layout microbenchmark (3 warm-ups, 15 alternating timed runs per version, same host) measured median wall time of 43.4 ms for baseline and 29.0 ms for the F1 candidate (33.3% lower). This is indicative only: the samples include scheduler noise, and this fixture/timing method is not a substitute for the CI profiler. A separate 10,000-symlink probe observed 139.0 ms vs. 127.4 ms for `-l3`, but the `-l0` control also varied; no attributable F3 wall-time gain is claimed from that run.
 
@@ -129,5 +133,7 @@ The `Links >= 2` modes (`a1`, `a5`, `a6`, `-C`, and `-e`) improved by 7.12–9.1
 The `a0`, `a2`, and `a3` intervals include zero. `a4` has a small positive result but does not exercise either optimized path; it is not attributed to F1 or F3. These are targeted results on one host and fixture, not a general performance guarantee.
 
 A supplementary date-width benchmark used a 50,000-file vertical listing with a date field, Release/static/LTO binaries, and 30 randomized subprocess runs per version on this x86_64 host. Baseline mean wall time was 112.68 ms and the candidate mean was 110.65 ms (1.80% lower); a rough independent-sample Welch 95% interval for the improvement was −1.44…+5.05%, so the timing is inconclusive. The source-level reduction in repeated `strftime()` calls is certain, but no end-to-end speedup is claimed from this noisy run.
+
+A separate link-count benchmark used a 50,000-file listing with `.h_.f`, 30 randomized runs per version, and the same Release/static/LTO setup. Baseline mean was 105.11 ms versus 106.34 ms for the `to_chars` candidate (1.18% slower); the median was nearly unchanged (105.19 vs. 105.06 ms) and the rough Welch interval for improvement was −4.01…+1.65%. This is inconclusive and does not show a speedup. Short `std::to_string()` results are commonly stored with small-string optimization, so avoiding a heap allocation is not guaranteed; this remains a low-risk trial pending target-host measurements.
 
 `scripts/profile-hot-path.sh` ran locally with baseline/candidate binaries, but Hyperfine, perf, strace, and Heaptrack were unavailable, so the script recorded `NOT RUN` for those probes. The configured PR profiling workflow builds base and head identically, runs the same script with its profiling tools, and uploads a report artifact for each push. CMake was installed outside the repository for local validation; no project dependency or workflow was added or changed.

@@ -29,12 +29,17 @@ static const char VERSIONSTR[] =
 #include "argh.hh"
 
 #include <algorithm>
+#include <array>
+#include <concepts>
 #include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
+#ifdef HAVE_CHARCONV
+# include <charconv>
+#endif
 
 #ifdef HAVE_SYS_TYPES_H
 # include <sys/types.h>
@@ -266,6 +271,20 @@ public:
     }
 } Inodemap;
 
+template<std::integral Integer, typename Callback>
+static auto WithLinkCountText(Integer value, Callback&& callback)
+{
+#ifdef HAVE_CHARCONV
+    std::array<char, static_cast<std::size_t>(std::numeric_limits<Integer>::digits10) + 3> buffer{};
+    const auto converted = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+    if(converted.ec == std::errc{})
+        return callback(std::string_view(buffer.data(),
+                                         static_cast<std::size_t>(converted.ptr - buffer.data())));
+#endif
+    const std::string text = std::to_string(value);
+    return callback(std::string_view(text));
+}
+
 static void TellMe(const StatType &Stat, std::string&& Name
 #ifdef DJGPP
     , unsigned int dosattr
@@ -366,7 +385,10 @@ static void TellMe(const StatType &Stat, std::string&& Name
             case FieldInfo::nrlinks:
             {
                 GetDescrColor(ColorDescr::NRLINK, 1);
-                ItemLen += (f.info ? Gwrite(std::to_string(Stat.st_nlink), Limits.Links) : Gwrite(std::to_string(Stat.st_nlink)));
+                ItemLen += WithLinkCountText(Stat.st_nlink, [&](std::string_view text)
+                {
+                    return f.info ? Gwrite(text, Limits.Links) : Gwrite(text);
+                });
                 break;
             }
             case FieldInfo::name:
@@ -711,7 +733,8 @@ static void UpdateEstimations(Estimation& Limits, const std::string& name, const
         Limits.SizeWithSeps = std::max(Limits.SizeWithSeps, GetSize(name, Stat, 0, '\'').size());
 
     if(FieldsToPrint.used[FieldInfo::nrlinks])
-        Limits.Links = std::max(Limits.Links, std::to_string(Stat.st_nlink).size());
+        Limits.Links = std::max(Limits.Links, WithLinkCountText(Stat.st_nlink,
+            [](std::string_view text) { return text.size(); }));
 
     if(FieldsToPrint.used[FieldInfo::user_id] || FieldsToPrint.used[FieldInfo::user_name])
     {
