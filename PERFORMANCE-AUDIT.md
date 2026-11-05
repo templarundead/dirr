@@ -10,7 +10,7 @@
 
 | Finding | Assessment |
 | --- | --- |
-| F1 | Confirmed structurally and optimized in this draft; the targeted AArch64 `-w` benchmark measured 7.46% lower mean wall time (workload-specific). |
+| F1 | Confirmed structurally and optimized in this draft. The earlier targeted AArch64 `-w` comparison measured 7.46% lower mean wall time; a later full-branch AArch64 batch measured 55.18% lower on `-w`, but combines F1, color sorting, and other draft changes. |
 | F2 | Partially confirmed: width estimation and rendering can repeat field work; the cost depends on selected fields and layout. |
 | F3 | Confirmed structurally and optimized: readlink reuse measured 7.12–9.18% lower mean wall time in the earlier AArch64 comparison; a successful-target-stat cache reduced a local 50k-link workload by 9.62% mean wall time and halved target `stat()` calls. Both results are fixture-specific. |
 | F4 | Confirmed structurally: `Inodemap` receives every non-directory passed to `UpdateEstimations`, without an `st_nlink > 1` check. |
@@ -144,6 +144,29 @@ The commands used the same `-A -c -X80` display options and varied the mode (`-a
 The `Links >= 2` modes (`a1`, `a5`, `a6`, `-C`, and `-e`) improved by 7.12–9.18%; their mean system time fell by 9.7–13.3%, consistent with the F3 `readlink()` reuse. In the current source, `opt_a(1)` leaves `Links` at its default value of 3, despite the help text listing `-l1`, so `a1` also exercises F3. The `-w` alias sets `Links=1` and enables vertical layout, isolating the F1 path among these changes: wall time fell 7.46%, CPU cycles fell 11.11%, and instructions fell 12.27%. Mean peak resident memory rose from 4.61 to 4.98 MiB (+7.95%), an observed memory tradeoff of caching per-entry estimates.
 
 The `a0`, `a2`, and `a3` intervals include zero. `a4` has a small positive result but does not exercise either optimized path; it is not attributed to F1 or F3. These are targeted results on one host and fixture, not a general performance guarantee.
+
+### Follow-up AArch64 per-option benchmark (2026-11-05)
+
+A later, separate user-provided Hyperfine 2.0.0 batch compared `main` and `draft` on Linux/AArch64 Release binaries built with static linking and LTO, with 50 samples per version and the same per-option workload for each pair. The build configuration was `Release`, `DIRR_ENABLE_LTO=ON`, `DIRR_STATIC=ON`, and `DIRR_ENABLE_SANITIZER=OFF`. These files are a distinct series from the 10,000-symlink profiling artifacts dated 2026-11-04; the two series are not combined below.
+
+The table reports mean wall time. Positive values mean the draft was faster. Approximate 95% intervals were calculated from the reported means and standard deviations assuming independent samples; they are not paired or bootstrap intervals.
+
+| Mode | Main → draft (ms) | Draft faster | Approx. 95% interval |
+| --- | ---: | ---: | ---: |
+| `-a0` | 278.57 → 278.72 | −0.05% | −0.84…+0.73% |
+| `-a1` | 299.46 → 303.60 | −1.38% | −2.06…−0.71% |
+| `-a2` | 264.60 → 264.91 | −0.12% | −0.76…+0.52% |
+| `-a3` | 253.96 → 253.27 | +0.27% | −0.72…+1.27% |
+| `-a4` | 291.30 → 289.58 | +0.59% | −0.15…+1.34% |
+| `-a5` | 336.27 → 338.61 | −0.69% | −1.19…−0.20% |
+| `-a6` | 311.34 → 312.83 | −0.48% | −1.06…+0.10% |
+| `-C` | 293.41 → 286.75 | +2.27% | +1.33…+3.21% |
+| `-e` | 240.95 → 236.82 | +1.71% | +0.57…+2.86% |
+| `-w` | 515.15 → 230.89 | +55.18% | +54.58…+55.78% |
+
+In this batch, `-c` disables colored output; it does not request color sorting. `-C` selects multicolumn output but does not itself enable vertical layout, while `-e` disables sorting. Only `-w` both enables vertical layout and uses `Sorting=pcm`, so it directly exercises the F1 estimate cache and the `c` sort key. Its CPU cycles fell 69.73% and instructions 68.74%; peak RSS rose from 14.26 to 17.85 MiB (+25.2%). Peak RSS was also higher in the other modes (about 7–11%, depending on mode).
+
+The `-w` result is a large net improvement for the complete main-versus-draft comparison, not an isolated measurement of F1 or the color-key cache. The `-a1` and `-a5` slowdowns are small (−1.38% and −0.69%) and do not exercise either the vertical-layout search or the `c` sort key. The other `-a` results are close to parity; `-C` and `-e` show modest gains from the complete branch comparison. All results remain specific to this host, build, and workload.
 
 ### Color-sort key benchmark
 
