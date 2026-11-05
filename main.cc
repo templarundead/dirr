@@ -73,6 +73,7 @@ static int DateTime, MyUid=-1, MyGid=-1;
 
 static std::string Sorting; /* n,d,s,u,g */
 static std::string DateForm;
+static std::size_t DateFormatWidth;
 static std::string FieldOrder;
 
 struct FieldInfo
@@ -585,6 +586,16 @@ public:
 
 static std::vector<StatItem> CollectedFilesForCurrentDirectory;
 
+static std::size_t MeasureDateFormatWidth()
+{
+    if(DateForm == "%u") return 12;
+    if(DateForm == "%z") return 5;
+
+    char buffer[64]{};
+    struct tm tm{};
+    return std::strftime(buffer, sizeof buffer, DateForm.c_str(), &tm);
+}
+
 static std::size_t CalculateRowWidth(const Estimation& estimation, bool file_too)
 {
     std::size_t row_width = 0;
@@ -607,21 +618,7 @@ static std::size_t CalculateRowWidth(const Estimation& estimation, bool file_too
             case FieldInfo::size: row_width += estimation.Size; break;
             case FieldInfo::size_compact: row_width += estimation.SizeCompact; break;
             case FieldInfo::size_sep: row_width += estimation.SizeWithSeps; break;
-            case FieldInfo::datetime:
-            {
-                if(DateForm == "%u")
-                    row_width += 12;
-                else if(DateForm == "%z")
-                    row_width += 5;
-                else
-                {
-                    char Buf[64];
-                    struct tm TM{};
-                    strftime(Buf, sizeof Buf, DateForm.c_str(), &TM);
-                    row_width += strlen(Buf);
-                }
-                break;
-            }
+            case FieldInfo::datetime: row_width += DateFormatWidth; break;
             case FieldInfo::user_id:    row_width += estimation.UIDnumber; break;
             case FieldInfo::user_name:  row_width += estimation.UIDname; break;
             case FieldInfo::group_id:   row_width += estimation.GIDnumber; break;
@@ -1403,6 +1400,8 @@ int main(int argc, const char *const *argv)
     // cute
     Handle parameters (getenv("DIRR"), argc, argv);
     FieldsToPrint.ParseFrom(FieldOrder);
+    if(FieldsToPrint.used[FieldInfo::datetime])
+        DateFormatWidth = MeasureDateFormatWidth();
 
     Dumping = true;
     DumpDirs();

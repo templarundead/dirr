@@ -86,13 +86,17 @@ The vertical layout now builds an `Estimation` vector once in directory order an
 
 `GetName()` now obtains the fixed path used for target metadata and the raw link target used for display from one `readlink()` call. It preserves the existing conditional `stat()`/`lstat()` probes and only reuses data within that `GetName()` invocation.
 
+### Cache the date width used by layout estimation
+
+When a date field is active, its estimate is now computed once after command-line options and fields are parsed. `CalculateRowWidth()` reuses that value instead of calling `strftime()` during every candidate-row calculation in vertical-layout search. The existing `%u` and `%z` widths are unchanged; other formats still estimate with a zero-initialized `tm`, and rendered dates are untouched.
+
 No CLI option, default, output format, sorting, palette, or paging behavior was intentionally changed.
 
 ## Validation and limitations
 
-For the F1 and F3 candidates, local Release builds and Debug ASan/UBSan builds each passed all 15 CTest tests. These supplementary builds used CMake 4.4.4 and GCC 12.2.0; the latter is below the requested GCC 14 floor, so they do not replace the GCC 14+ CI matrix.
+For the F1 and F3 candidates, earlier local Release and Debug ASan/UBSan builds each passed all 15 CTest tests. The date-width candidate was separately built in Release (static + LTO) and Debug ASan/UBSan; both CTest runs also passed 15/15. These supplementary builds used GCC 12.2.0 (CMake 3.31.6 for the date-width candidate), below the requested GCC 14 floor, so they do not replace the GCC 14+ CI matrix.
 
-Byte comparisons were identical for aliases `-a0` through `-a6` on a fixture containing hidden files, a directory, a hardlink, and valid, absolute, dangling, directory, and chained symlinks. Explicit `-l0` through `-l5` were also compared after the aliases (42 combinations); a separate vertical-layout comparison with link modes 2, 3, and 5 was byte-identical.
+Byte comparisons were identical for aliases `-a0` through `-a6` on a fixture containing hidden files, a directory, a hardlink, and valid, absolute, dangling, directory, and chained symlinks. Explicit `-l0` through `-l5` were also compared after the aliases (42 combinations); a separate vertical-layout comparison with link modes 2, 3, and 5 was byte-identical. The date-width candidate also matched the baseline byte-for-byte for `-a0` through `-a6` and three custom `-F` date formats, including vertical layout.
 
 A local 6,000-entry vertical-layout microbenchmark (3 warm-ups, 15 alternating timed runs per version, same host) measured median wall time of 43.4 ms for baseline and 29.0 ms for the F1 candidate (33.3% lower). This is indicative only: the samples include scheduler noise, and this fixture/timing method is not a substitute for the CI profiler. A separate 10,000-symlink probe observed 139.0 ms vs. 127.4 ms for `-l3`, but the `-l0` control also varied; no attributable F3 wall-time gain is claimed from that run.
 
@@ -123,5 +127,7 @@ The commands used the same `-A -c -X80` display options and varied the mode (`-a
 The `Links >= 2` modes (`a1`, `a5`, `a6`, `-C`, and `-e`) improved by 7.12–9.18%; their mean system time fell by 9.7–13.3%, consistent with the F3 `readlink()` reuse. In the current source, `opt_a(1)` leaves `Links` at its default value of 3, despite the help text listing `-l1`, so `a1` also exercises F3. The `-w` alias sets `Links=1` and enables vertical layout, isolating the F1 path among these changes: wall time fell 7.46%, CPU cycles fell 11.11%, and instructions fell 12.27%. Mean peak resident memory rose from 4.61 to 4.98 MiB (+7.95%), an observed memory tradeoff of caching per-entry estimates.
 
 The `a0`, `a2`, and `a3` intervals include zero. `a4` has a small positive result but does not exercise either optimized path; it is not attributed to F1 or F3. These are targeted results on one host and fixture, not a general performance guarantee.
+
+A supplementary date-width benchmark used a 50,000-file vertical listing with a date field, Release/static/LTO binaries, and 30 randomized subprocess runs per version on this x86_64 host. Baseline mean wall time was 112.68 ms and the candidate mean was 110.65 ms (1.80% lower); a rough independent-sample Welch 95% interval for the improvement was −1.44…+5.05%, so the timing is inconclusive. The source-level reduction in repeated `strftime()` calls is certain, but no end-to-end speedup is claimed from this noisy run.
 
 `scripts/profile-hot-path.sh` ran locally with baseline/candidate binaries, but Hyperfine, perf, strace, and Heaptrack were unavailable, so the script recorded `NOT RUN` for those probes. The configured PR profiling workflow builds base and head identically, runs the same script with its profiling tools, and uploads a report artifact for each push. CMake was installed outside the repository for local validation; no project dependency or workflow was added or changed.
