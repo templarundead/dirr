@@ -28,12 +28,18 @@ static bool LinkFormatStatsOfTarget()
 {
     return Links==3 || Links==5;
 }
-
-std::string GetSize(const std::string &s, const StatType &Sta, std::size_t Space, int Seps)
+bool SizeUsesLinkTarget()
 {
-    const StatType *Stat = &Sta;
+    return LinkFormatStatsOfTarget();
+}
+
+std::string GetSize(const std::string &s, const StatType &Sta, std::size_t Space, int Seps,
+                    LinkTargetStatCache* link_stat_cache)
+{
+    StatSummary current{Sta};
+    const StatSummary *Stat = &current;
 #ifdef S_ISLNK
-    StatType target_stat{}; // Must outlive the GotSize retry path below.
+    StatSummary target_summary{}; // Must outlive the GotSize retry path below.
 #endif
 
     std::string result;
@@ -42,23 +48,23 @@ std::string GetSize(const std::string &s, const StatType &Sta, std::size_t Space
 #ifdef S_ISLNK
 GotSize:
 #endif
-         if(S_ISDIR (Stat->st_mode)) result = "<DIR>";
+         if(S_ISDIR (Stat->mode)) result = "<DIR>";
     #ifdef S_ISFIFO
-    else if(S_ISFIFO(Stat->st_mode)) result = "<PIPE>";
+    else if(S_ISFIFO(Stat->mode)) result = "<PIPE>";
     #endif
     #ifdef S_ISSOCK
-    else if(S_ISSOCK(Stat->st_mode)) result = "<SOCKET>";
+    else if(S_ISSOCK(Stat->mode)) result = "<SOCKET>";
     #endif
-    else if(S_ISCHR (Stat->st_mode))
+    else if(S_ISCHR (Stat->mode))
     {
-        result = Printf(ChrStr, MAJOR(Stat->st_rdev), MINOR(Stat->st_rdev));
+        result = Printf(ChrStr, MAJOR(Stat->rdev), MINOR(Stat->rdev));
     }
-    else if(S_ISBLK (Stat->st_mode))
+    else if(S_ISBLK (Stat->mode))
     {
-        result = Printf(BlkStr, MAJOR(Stat->st_rdev), MINOR(Stat->st_rdev));
+        result = Printf(BlkStr, MAJOR(Stat->rdev), MINOR(Stat->rdev));
     }
     #ifdef S_ISLNK
-    else if(S_ISLNK (Stat->st_mode))
+    else if(S_ISLNK (Stat->mode))
     {
         if(!LinkFormatWithoutSize())goto P1;
 LinkProblem:
@@ -75,14 +81,17 @@ P1:
         /* Tämä iffi on tässä siksi uudestaan, kun tähän voidaan päätyä
          * sekä gotolla, että myös jos oli tavanomainen tiedosto.
          */
-        if(S_ISLNK(Stat->st_mode))
+        if(S_ISLNK(Stat->mode))
         {
             if(LinkFormatStatsOfTarget())
             {
-                const std::string target_path = LinkTarget(s, true);
-                if (auto target = try_stat(target_path); target) {
-                    target_stat = *target;
-                    Stat = &target_stat;
+                // Reuse the link resolution the name field already did.
+                LinkTargetStatCache local_cache;
+                LinkTargetStatCache& cache = link_stat_cache ? *link_stat_cache : local_cache;
+                (void)LinkTargetCached(s, cache);
+                if (const StatSummary* target = LinkTargetStatCached(cache)) {
+                    target_summary = *target;
+                    Stat = &target_summary;
                     goto GotSize;
                 }
                 goto LinkProblem;
@@ -91,7 +100,7 @@ P1:
             descr = (ColorDescr)-1;
         }
 #endif
-        l = Stat->st_size;
+        l = Stat->size;
 
         const char* Suffix = "";
 

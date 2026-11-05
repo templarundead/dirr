@@ -29,12 +29,18 @@ static const char VERSIONSTR[] =
 #include "argh.hh"
 
 #include <algorithm>
+#include <array>
+#include <concepts>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
+#ifdef HAVE_CHARCONV
+# include <charconv>
+#endif
 
 #ifdef HAVE_SYS_TYPES_H
 # include <sys/types.h>
@@ -73,6 +79,7 @@ static int DateTime, MyUid=-1, MyGid=-1;
 
 static std::string Sorting; /* n,d,s,u,g */
 static std::string DateForm;
+static std::size_t DateFormatWidth;
 static std::string FieldOrder;
 
 struct FieldInfo
@@ -265,11 +272,26 @@ public:
     }
 } Inodemap;
 
+template<std::integral Integer, typename Callback>
+static auto WithLinkCountText(Integer value, Callback&& callback)
+{
+#ifdef HAVE_CHARCONV
+    std::array<char, static_cast<std::size_t>(std::numeric_limits<Integer>::digits10) + 3> buffer{};
+    const auto converted = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+    if(converted.ec == std::errc{})
+        return callback(std::string_view(buffer.data(),
+                                         static_cast<std::size_t>(converted.ptr - buffer.data())));
+#endif
+    const std::string text = std::to_string(value);
+    return callback(std::string_view(text));
+}
+
 static void TellMe(const StatType &Stat, std::string&& Name
 #ifdef DJGPP
     , unsigned int dosattr
 #endif
-    )
+    , LinkTargetStatCache* link_stat_cache,
+      std::optional<int> name_attr_cache = std::nullopt)
 {
     std::string OwNum,GrNum,OwNam,GrNam;
     std::size_t ItemLen = 0;
@@ -365,12 +387,16 @@ static void TellMe(const StatType &Stat, std::string&& Name
             case FieldInfo::nrlinks:
             {
                 GetDescrColor(ColorDescr::NRLINK, 1);
-                ItemLen += (f.info ? Gwrite(std::to_string(Stat.st_nlink), Limits.Links) : Gwrite(std::to_string(Stat.st_nlink)));
+                ItemLen += WithLinkCountText(Stat.st_nlink, [&](std::string_view text)
+                {
+                    return f.info ? Gwrite(text, Limits.Links) : Gwrite(text);
+                });
                 break;
             }
             case FieldInfo::name:
             {
-                SetAttr( GetNameAttr(Stat, NameOnly(Name)) );
+                SetAttr(name_attr_cache ? *name_attr_cache
+                                        : GetNameAttr(Stat, NameOnly(Name)));
 
                 const char *hardlinkfn = Inodemap.get(Stat.st_dev, Stat.st_ino);
                 if(hardlinkfn && Name == hardlinkfn) hardlinkfn = nullptr;
@@ -378,23 +404,24 @@ static void TellMe(const StatType &Stat, std::string&& Name
                 bool nameonly = f.info;
                 if(!nameonly && Name.rfind('/')==1 && Name.substr(0,2)=="./") nameonly = true;
                 const auto name_width = GetName(Name, Stat, Limits.Name,
-                                                MultiColumn || f.info, nameonly, hardlinkfn);
+                                                MultiColumn || f.info, nameonly, hardlinkfn,
+                                                link_stat_cache);
                 ItemLen += std::max(name_width, Limits.Name);
                 break;
             }
             case FieldInfo::size:
             {
-                ItemLen += Gwrite(GetSize(Name, Stat, f.info ? Limits.Size : 0, 0));
+                ItemLen += Gwrite(GetSize(Name, Stat, f.info ? Limits.Size : 0, 0, link_stat_cache));
                 break;
             }
             case FieldInfo::size_compact:
             {
-                ItemLen += Gwrite(GetSize(Name, Stat, f.info ? Limits.SizeCompact : 0, -1));
+                ItemLen += Gwrite(GetSize(Name, Stat, f.info ? Limits.SizeCompact : 0, -1, link_stat_cache));
                 break;
             }
             case FieldInfo::size_sep:
             {
-                ItemLen += Gwrite(GetSize(Name, Stat, (f.info & 0x80) ? Limits.SizeWithSeps : 0, char(f.info & 0x7F)));
+                ItemLen += Gwrite(GetSize(Name, Stat, (f.info & 0x80) ? Limits.SizeWithSeps : 0, char(f.info & 0x7F), link_stat_cache));
                 break;
             }
             case FieldInfo::datetime:
@@ -484,6 +511,8 @@ public:
     unsigned dosattr;
     #endif
     std::string Name;
+    std::optional<int> NameAttr{};
+    std::unique_ptr<LinkTargetStatCache> LinkStatCache{};
 public:
     StatItem(const StatType &t,
     #ifdef DJGPP
@@ -495,10 +524,10 @@ public:
     #endif
                                 Name(std::move(n)) { }
 
-    StatItem(StatItem&&) = default;
-    StatItem(const StatItem&) = default;
-    StatItem& operator=(StatItem&&) = default;
-    StatItem& operator=(const StatItem&) = default;
+    StatItem(StatItem&&) noexcept = default;
+    StatItem(const StatItem&) = delete;
+    StatItem& operator=(StatItem&&) noexcept = default;
+    StatItem& operator=(const StatItem&) = delete;
 
     /* Returns the class code for grouping sort */
     int Class(int LinksAreFiles) const
@@ -528,8 +557,8 @@ public:
             SizeType Result=0;
             switch(c)
             {
-                case 'c': Result = GetNameAttr(me.Stat, NameOnly(me.Name)) - GetNameAttr(other.Stat, NameOnly(other.Name)); break;
-                case 'C': Result = GetNameAttr(other.Stat, NameOnly(other.Name)) - GetNameAttr(me.Stat, NameOnly(me.Name)); break;
+                case 'c': Result = me.NameAttr.value() - other.NameAttr.value(); break;
+                case 'C': Result = other.NameAttr.value() - me.NameAttr.value(); break;
                 case 'e': Result = me.Name.size() - other.Name.size(); break;
                 case 'E': Result = other.Name.size() - me.Name.size(); break;
                 case 'n': Result = strcmp(me.Name.c_str(), other.Name.c_str()); break;
@@ -585,6 +614,16 @@ public:
 
 static std::vector<StatItem> CollectedFilesForCurrentDirectory;
 
+static std::size_t MeasureDateFormatWidth()
+{
+    if(DateForm == "%u") return 12;
+    if(DateForm == "%z") return 5;
+
+    char buffer[64]{};
+    struct tm tm{};
+    return std::strftime(buffer, sizeof buffer, DateForm.c_str(), &tm);
+}
+
 static std::size_t CalculateRowWidth(const Estimation& estimation, bool file_too)
 {
     std::size_t row_width = 0;
@@ -607,21 +646,7 @@ static std::size_t CalculateRowWidth(const Estimation& estimation, bool file_too
             case FieldInfo::size: row_width += estimation.Size; break;
             case FieldInfo::size_compact: row_width += estimation.SizeCompact; break;
             case FieldInfo::size_sep: row_width += estimation.SizeWithSeps; break;
-            case FieldInfo::datetime:
-            {
-                if(DateForm == "%u")
-                    row_width += 12;
-                else if(DateForm == "%z")
-                    row_width += 5;
-                else
-                {
-                    char Buf[64];
-                    struct tm TM{};
-                    strftime(Buf, sizeof Buf, DateForm.c_str(), &TM);
-                    row_width += strlen(Buf);
-                }
-                break;
-            }
+            case FieldInfo::datetime: row_width += DateFormatWidth; break;
             case FieldInfo::user_id:    row_width += estimation.UIDnumber; break;
             case FieldInfo::user_name:  row_width += estimation.UIDname; break;
             case FieldInfo::group_id:   row_width += estimation.GIDnumber; break;
@@ -680,7 +705,21 @@ static void ResetEstimations()
     if(!PreScan) EstimateFields();
 }
 
-static void UpdateEstimations(Estimation& Limits, const std::string& name, const StatType& Stat)
+static void MergeEstimations(Estimation& Limits, const Estimation& Item)
+{
+    Limits.Name         = std::max(Limits.Name,         Item.Name);
+    Limits.Size         = std::max(Limits.Size,         Item.Size);
+    Limits.SizeWithSeps = std::max(Limits.SizeWithSeps, Item.SizeWithSeps);
+    Limits.SizeCompact  = std::max(Limits.SizeCompact,  Item.SizeCompact);
+    Limits.UIDname      = std::max(Limits.UIDname,      Item.UIDname);
+    Limits.UIDnumber    = std::max(Limits.UIDnumber,    Item.UIDnumber);
+    Limits.GIDname      = std::max(Limits.GIDname,      Item.GIDname);
+    Limits.GIDnumber    = std::max(Limits.GIDnumber,    Item.GIDnumber);
+    Limits.Links        = std::max(Limits.Links,        Item.Links);
+}
+
+static void UpdateEstimations(Estimation& Limits, const std::string& name, const StatType& Stat,
+                              std::unique_ptr<LinkTargetStatCache>& link_stat_cache)
 {
     if(!S_ISDIR(Stat.st_mode)) Inodemap.insert(Stat.st_dev, Stat.st_ino, name);
 
@@ -688,20 +727,37 @@ static void UpdateEstimations(Estimation& Limits, const std::string& name, const
     {
         const char *hardlinkfn = Inodemap.get(Stat.st_dev, Stat.st_ino);
         if(hardlinkfn && name == hardlinkfn) hardlinkfn = nullptr;
-        Limits.Name = std::max(Limits.Name, GetName(name, Stat, 0, false, true, hardlinkfn));
+#ifdef S_ISLNK
+        if(Links >= 2 && S_ISLNK(Stat.st_mode) && !link_stat_cache)
+            link_stat_cache = std::make_unique<LinkTargetStatCache>();
+#endif
+        Limits.Name = std::max(Limits.Name,
+                               GetName(name, Stat, 0, false, true, hardlinkfn,
+                                       link_stat_cache.get()));
     }
 
+#ifdef S_ISLNK
+    // Size of a followed link target is resolved through the same cache the
+    // name field uses, so estimate and render passes share one stat().
+    if(!link_stat_cache && S_ISLNK(Stat.st_mode) && SizeUsesLinkTarget()
+       && (FieldsToPrint.used[FieldInfo::size]
+           || FieldsToPrint.used[FieldInfo::size_compact]
+           || FieldsToPrint.used[FieldInfo::size_sep]))
+        link_stat_cache = std::make_unique<LinkTargetStatCache>();
+#endif
+
     if(FieldsToPrint.used[FieldInfo::size])
-        Limits.Size = std::max(Limits.Size, GetSize(name, Stat, 0, 0).size());
+        Limits.Size = std::max(Limits.Size, GetSize(name, Stat, 0, 0, link_stat_cache.get()).size());
 
     if(FieldsToPrint.used[FieldInfo::size_compact])
-        Limits.SizeCompact  = std::max(Limits.SizeCompact,  GetSize(name, Stat, 0, -1).size());
+        Limits.SizeCompact  = std::max(Limits.SizeCompact,  GetSize(name, Stat, 0, -1, link_stat_cache.get()).size());
 
     if(FieldsToPrint.used[FieldInfo::size_sep])
-        Limits.SizeWithSeps = std::max(Limits.SizeWithSeps, GetSize(name, Stat, 0, '\'').size());
+        Limits.SizeWithSeps = std::max(Limits.SizeWithSeps, GetSize(name, Stat, 0, '\'', link_stat_cache.get()).size());
 
     if(FieldsToPrint.used[FieldInfo::nrlinks])
-        Limits.Links = std::max(Limits.Links, std::to_string(Stat.st_nlink).size());
+        Limits.Links = std::max(Limits.Links, WithLinkCountText(Stat.st_nlink,
+            [](std::string_view text) { return text.size(); }));
 
     if(FieldsToPrint.used[FieldInfo::user_id] || FieldsToPrint.used[FieldInfo::user_name])
     {
@@ -724,7 +780,13 @@ static void PrintAllFilesCollectedSoFar()
     auto& f = CollectedFilesForCurrentDirectory;
 
     if(!Sorting.empty())
+    {
+        // Compute color keys outside the comparator so sorting does not repeat DFA matches.
+        if(f.size() > 1 && Sorting.find_first_of("cC") != std::string::npos)
+            for(StatItem& item : f)
+                item.NameAttr = GetNameAttr(item.Stat, NameOnly(item.Name));
         std::sort(f.begin(), f.end());
+    }
 
     EstimateFields();
 
@@ -736,10 +798,15 @@ static void PrintAllFilesCollectedSoFar()
         // Check how many columns we can get away with.
         // Try to get the shortest number of lines.
 
+        // Estimate each item once; the binary search below revisits the same files.
+        std::vector<Estimation> ItemEstimates(f.size());
+        for(std::size_t a = 0; a < f.size(); ++a)
+            UpdateEstimations(ItemEstimates[a], f[a].Name, f[a].Stat, f[a].LinkStatCache);
+
         // Using binary search, find the shortest number of lines
         // where printing still works.
         std::size_t columns = 0;
-        auto acceptable = [&columns](std::size_t lines)
+        auto acceptable = [&columns, &ItemEstimates](std::size_t lines)
         {
             Longest.clear();
             std::size_t column = 1, line = 0, total_width = 0;
@@ -750,7 +817,7 @@ static void PrintAllFilesCollectedSoFar()
             for(std::size_t a=0; a<f.size(); ++a)
             {
                 if(line == 0) Longest.emplace_back(); // add column
-                UpdateEstimations(Longest.back(), f[a].Name, f[a].Stat);
+                MergeEstimations(Longest.back(), ItemEstimates[a]);
                 const std::size_t width = CalculateRowWidth(Longest.back(), true);
                 //printf("item %zu on line %zu column %zu: column width now %zu+%zu\n", a, line,column, total_width, width);
                 if(column > 1
@@ -798,7 +865,7 @@ static void PrintAllFilesCollectedSoFar()
                 #ifdef DJGPP
                        , tmp.dosattr
                 #endif
-                      );
+                       , tmp.LinkStatCache.get(), tmp.NameAttr);
             }
             if(CurrentColumn) { Gputch('\n'); RowLen=0; CurrentColumn=0; }
         }
@@ -807,7 +874,7 @@ static void PrintAllFilesCollectedSoFar()
     else
     {
         for(StatItem& tmp: f)
-            UpdateEstimations(Longest.front(), tmp.Name, tmp.Stat);
+            UpdateEstimations(Longest.front(), tmp.Name, tmp.Stat, tmp.LinkStatCache);
         EstimateFields(); // Make sure the file name remains clipped
 
         RowLen=0;
@@ -818,7 +885,7 @@ static void PrintAllFilesCollectedSoFar()
             #ifdef DJGPP
                    , tmp.dosattr
             #endif
-                  );
+                   , tmp.LinkStatCache.get(), tmp.NameAttr);
         }
         Dumping = false;
     }
@@ -863,12 +930,13 @@ static void SingleFile(string&& Buffer)
                 std::move(Buffer));
         } else {
             Dumping = true;
-            UpdateEstimations(Longest.front(), Buffer, Stat);
+            std::unique_ptr<LinkTargetStatCache> LinkStatCache;
+            UpdateEstimations(Longest.front(), Buffer, Stat, LinkStatCache);
             TellMe(Stat, std::move(Buffer)
 #ifdef DJGPP
                    , attr
 #endif
-                  );
+                   , LinkStatCache.get());
             Dumping = false;
         }
     }
@@ -1385,6 +1453,8 @@ int main(int argc, const char *const *argv)
     // cute
     Handle parameters (getenv("DIRR"), argc, argv);
     FieldsToPrint.ParseFrom(FieldOrder);
+    if(FieldsToPrint.used[FieldInfo::datetime])
+        DateFormatWidth = MeasureDateFormatWidth();
 
     Dumping = true;
     DumpDirs();
