@@ -12,12 +12,12 @@
 | --- | --- |
 | F1 | Confirmed structurally and optimized in this draft; the targeted AArch64 `-w` benchmark measured 7.46% lower mean wall time (workload-specific). |
 | F2 | Partially confirmed: width estimation and rendering can repeat field work; the cost depends on selected fields and layout. |
-| F3 | Confirmed structurally and optimized; targeted AArch64 link-resolution modes measured 7.12–9.18% lower mean wall time. Other metadata calls remain path-dependent. |
+| F3 | Confirmed structurally and optimized: readlink reuse measured 7.12–9.18% lower mean wall time in the earlier AArch64 comparison; a successful-target-stat cache reduced a local 50k-link workload by 9.62% mean wall time and halved target `stat()` calls. Both results are fixture-specific. |
 | F4 | Confirmed structurally: `Inodemap` receives every non-directory passed to `UpdateEstimations`, without an `st_nlink > 1` check. |
 | F5 | Character-at-a-time output path confirmed; syscall savings from `setvbuf` are not established. |
-| F6 | The stated locale-based explanation is not supported by the current formatter; numeric stream formatting remains a separate optimization hypothesis. |
+| F6 | The stated locale-based explanation is not supported by the current formatter. A `to_chars` trial for link counts showed no measurable speedup on the corrected local benchmark. |
 | F7 | Confirmed for the legacy `Gprintf` path: a `PrintfProxy` parses the format on each invocation. `Gformat` bypasses it when available. |
-| F8 | The supplied date-cost estimates are overstated or describe the wrong branches. |
+| F8 | The supplied date-cost estimates are overstated or describe the wrong branches; a corrected local date-width benchmark measured 31.54% lower mean wall time on its targeted workload. |
 | F9 | Partially confirmed: cache hits still lock and copy the cached string; NSS locking is limited to misses. |
 | F10 | Partially confirmed: full paths and path-based metadata lookups are used; the claimed temporary allocation does not apply to `std::string` callers. |
 | F11 | Mutexes are present in the normal GCC build; this confirms a possible cost, not that the lock is a measured hotspot. |
@@ -36,7 +36,9 @@ At the reviewed baseline, `PrintAllFilesCollectedSoFar()` used a binary search t
 
 ### F3 — symlink resolution
 
-At the reviewed baseline, `GetName()` called `LinkTarget()` before and after target inspection when `Links >= 2`, producing two `readlink()` calls plus `stat()` and a conditional `lstat()`. This draft passes an optional output string to `LinkTarget()`, allowing the fixed target path used for metadata and the raw target used for rendering to come from the same readlink buffer. The branch therefore saves one `readlink()`; the `stat()`/`lstat()` behavior remains conditional, and other paths (such as size formatting) are unchanged. The result is reused only within one `GetName()` call. See the current implementation at `getname.cc:92–125`, `strfun.cc:38–59`, and `stat.h:30–65`.
+At the reviewed baseline, `GetName()` called `LinkTarget()` before and after target inspection when `Links >= 2`, producing two `readlink()` calls plus `stat()` and a conditional `lstat()`. This draft passes an optional output string to `LinkTarget()`, allowing the fixed target path used for metadata and the raw target used for rendering to come from the same readlink buffer, saving one `readlink()` per `GetName()` call.
+
+The draft also gives each listed symlink a lazy `LinkTargetStatCache` when the name field is estimated with `Links >= 2`. A successful target `stat()` mode is reused when the same raw link text is read during final rendering; failed `stat()` results are not cached, and a changed link text invalidates the cached mode. Conditional `lstat()` behavior and other metadata paths (such as size formatting) are unchanged. Because a successful mode may now be reused between width estimation and rendering, a target replaced in place during that interval could retain the earlier mode for type-suffix and color decisions; directory listings are otherwise unchanged. See `getname.cc:92–150`, `getname.hh:12–21`, `main.cc:714–737`, `strfun.cc:38–59`, and `stat.h:30–65`.
 
 ### F4 — inode-map insertions
 
@@ -82,9 +84,9 @@ The width estimator handles `%u` and `%z` as fixed widths; for other formats it 
 
 The vertical layout now builds an `Estimation` vector once in directory order and merges those per-item widths into the candidate column maxima during the binary search. This retains the existing `Inodemap` insertion order and leaves the rendering logic unchanged.
 
-### F3 — reuse symlink target read
+### F3 — reuse symlink target data
 
-`GetName()` now obtains the fixed path used for target metadata and the raw link target used for display from one `readlink()` call. It preserves the existing conditional `stat()`/`lstat()` probes and only reuses data within that `GetName()` invocation.
+`GetName()` obtains the fixed path used for target metadata and the raw link target used for display from one `readlink()` call. A lazy per-entry cache also reuses a successful target mode across name-width estimation and rendering when the raw link text is unchanged. Failed target `stat()` calls are still retried, and `lstat()` behavior is unchanged. The cache is only enabled for listed symlinks when `Links >= 2` and the name field is active.
 
 ### Cache the date width used by layout estimation
 
@@ -98,15 +100,15 @@ No CLI option, default, output format, sorting, palette, or paging behavior was 
 
 ## Validation and limitations
 
-For the F1 and F3 candidates, earlier local Release and Debug ASan/UBSan builds each passed all 15 CTest tests. The date-width and link-count `to_chars` candidates were built together in Release (static + LTO) and Debug ASan/UBSan; both CTest runs passed 15/15. These supplementary builds used GCC 12.2.0 and CMake 3.31.6, below the requested GCC 14 floor, so they do not replace the GCC 14+ CI matrix.
+The current combined candidate, including the successful target-stat cache, date-width cache, and link-count `to_chars`, passed all 15 CTest tests in both Release (static + LTO) and Debug ASan/UBSan builds. These supplementary builds used GCC 12.2.0 and CMake 3.31.6, below the requested GCC 14 floor, so they do not replace the GCC 14+ CI matrix.
 
-Byte comparisons were identical for aliases `-a0` through `-a6` on a fixture containing hidden files, a directory, a hardlink, and valid, absolute, dangling, directory, and chained symlinks. Explicit `-l0` through `-l5` were also compared after the aliases (42 combinations); a separate vertical-layout comparison with link modes 2, 3, and 5 was byte-identical. The date-width candidate also matched the baseline byte-for-byte for `-a0` through `-a6` and three custom `-F` date formats, including vertical layout. The link-count `to_chars` candidate was byte-identical to its parent for `-a0` through `-a6` and custom `.h`/`.h_.f` field layouts on a fixture with 120 hardlinks.
+The current target-cache candidate and its immediate parent produced byte-identical output for aliases `-a0` through `-a6` on a fixture containing hidden files, a directory, a hardlink, and valid, absolute, dangling, directory, and chained symlinks. Explicit `-l0` through `-l5` with attached filename field `-f.f` also matched on a 10,000-symlink fixture. The date-width path matched for five formats using attached `-f.f_.d` and `-F<format>` arguments, and the link-count path matched for `-f.h_.f` on a 50,000-file fixture. These corrected invocations attach each specification to its option; a separate `-f` argument would be treated as an operand rather than a field value.
 
-A local 6,000-entry vertical-layout microbenchmark (3 warm-ups, 15 alternating timed runs per version, same host) measured median wall time of 43.4 ms for baseline and 29.0 ms for the F1 candidate (33.3% lower). This is indicative only: the samples include scheduler noise, and this fixture/timing method is not a substitute for the CI profiler. A separate 10,000-symlink probe observed 139.0 ms vs. 127.4 ms for `-l3`, but the `-l0` control also varied; no attributable F3 wall-time gain is claimed from that run.
+A local 6,000-entry vertical-layout microbenchmark (3 warm-ups, 15 alternating timed runs per version, same host) measured median wall time of 43.4 ms for baseline and 29.0 ms for the F1 candidate (33.3% lower). This is indicative only: the samples include scheduler noise, and this fixture/timing method is not a substitute for the CI profiler. An earlier 10,000-symlink probe was inconclusive because its `-l0` control also varied; it is superseded by the controlled F3 comparison below.
 
-### Additional AArch64 main-versus-draft benchmark
+### Earlier AArch64 main-versus-draft benchmark (F1/F3 readlink reuse)
 
-User-provided Hyperfine 2.0.0 JSON results compare Linux/AArch64 Release binaries built with static linking and LTO, with 50 samples per version on the same symlink fixture. The build configuration was:
+User-provided Hyperfine 2.0.0 JSON results compare Linux/AArch64 Release binaries built with static linking and LTO, with 50 samples per version on the same symlink fixture. This comparison predates the later date-width, `to_chars`, and successful target-stat-cache additions; it does not measure those changes. The build configuration was:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDIRR_ENABLE_LTO=ON -DDIRR_STATIC=ON -DDIRR_ENABLE_SANITIZER=OFF
@@ -132,8 +134,16 @@ The `Links >= 2` modes (`a1`, `a5`, `a6`, `-C`, and `-e`) improved by 7.12–9.1
 
 The `a0`, `a2`, and `a3` intervals include zero. `a4` has a small positive result but does not exercise either optimized path; it is not attributed to F1 or F3. These are targeted results on one host and fixture, not a general performance guarantee.
 
-A supplementary date-width benchmark used a 50,000-file vertical listing with a date field, Release/static/LTO binaries, and 30 randomized subprocess runs per version on this x86_64 host. Baseline mean wall time was 112.68 ms and the candidate mean was 110.65 ms (1.80% lower); a rough independent-sample Welch 95% interval for the improvement was −1.44…+5.05%, so the timing is inconclusive. The source-level reduction in repeated `strftime()` calls is certain, but no end-to-end speedup is claimed from this noisy run.
+### Corrected date-width benchmark
 
-A separate link-count benchmark used a 50,000-file listing with `.h_.f`, 30 randomized runs per version, and the same Release/static/LTO setup. Baseline mean was 105.11 ms versus 106.34 ms for the `to_chars` candidate (1.18% slower); the median was nearly unchanged (105.19 vs. 105.06 ms) and the rough Welch interval for improvement was −4.01…+1.65%. This is inconclusive and does not show a speedup. Short `std::to_string()` results are commonly stored with small-string optimization, so avoiding a heap allocation is not guaranteed; this remains a low-risk trial pending target-host measurements.
+The corrected 50,000-file vertical-layout benchmark used `-C -vc -A -c -X80 -f.f_.d`, with the field specification attached to `-f`. Release/static/LTO binaries were compared in 30 randomized subprocess runs per version on this x86_64 host. Baseline mean/median wall time was 222.287/214.589 ms; the date-width candidate measured 152.180/151.945 ms, a 31.54% lower mean. The rough independent-sample Welch 95% interval for the improvement was 28.79–34.28%. The earlier 112.68/110.65 ms figures used an invalid, separated `-f` argument and are withdrawn.
 
-`scripts/profile-hot-path.sh` ran locally with baseline/candidate binaries, but Hyperfine, perf, strace, and Heaptrack were unavailable, so the script recorded `NOT RUN` for those probes. The configured PR profiling workflow builds base and head identically, runs the same script with its profiling tools, and uploads a report artifact for each push. CMake was installed outside the repository for local validation; no project dependency or workflow was added or changed.
+### Corrected link-count `to_chars` benchmark
+
+The corrected 50,000-file benchmark used the attached field specification `-f.h_.f`, 30 randomized runs per version, and Release/static/LTO binaries. Baseline mean/median wall time was 146.779/142.400 ms; the `to_chars` candidate measured 146.775/146.726 ms. The mean difference rounds to 0.00%, and the rough independent-sample Welch 95% interval for improvement was −5.15…+5.15%; no speedup was detected. The earlier 105.11/106.34 ms figures passed `.h_.f` as a separate operand after `-f`, so they are invalid and withdrawn. The candidate remains a low-risk trial pending measurements on the target AArch64 host.
+
+### Corrected F3 target-stat benchmark and call-count probe
+
+A 50,000-symlink fixture pointed every link at the same target. Baseline and target-cache candidate were dynamic Release/LTO binaries differing only by the target-stat cache; 30 randomized subprocess runs per version used `-l3 -A -c -X80 -f.f`. Mean/median wall time fell from 378.918/370.942 ms to 342.456/335.488 ms (9.62% lower mean); the rough independent-sample Welch 95% interval for improvement was 6.51–12.73%. A custom `LD_PRELOAD` counter filtered calls to the resolved `targets/file` path and recorded 100,000 target `stat()` calls for the baseline versus 50,000 for the candidate (two per link reduced to one per link); the single-link probe likewise changed from two calls to one. This confirms the repeated target-stat path and the intended call-count reduction, while the wall-time result remains specific to this synthetic fixture and host. Heaptrack was unavailable, so the memory overhead of the lazily allocated per-symlink cache was not measured.
+
+`scripts/profile-hot-path.sh` ran locally with the pre-cache baseline and target-cache candidate, but Hyperfine, perf, strace, and Heaptrack were unavailable, so the script recorded `NOT RUN` for those probes. The randomized subprocess and LD_PRELOAD measurements above are supplementary, not substitutes for those tools or for the configured CI profiler. The PR profiling workflow builds base and head identically, runs the same script with its profiling tools, and uploads a report artifact for each push; the latest available artifact could not be downloaded (`EOF`), so no CI profiling numbers are cited here. CMake was installed outside the repository for local validation; no project dependency or workflow was added or changed.
