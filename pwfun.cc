@@ -26,13 +26,27 @@ std::string cached_lookup(Id id, Lookup&& lookup) {
     static std::mutex cache_mutex;
     static std::unordered_map<Id, std::string> cache;
 
+    // A listing resolves the same id for most of its entries, in the
+    // estimating pass and again in the rendering one. A one-entry front cache
+    // answers those repeats without touching the shared map or its lock.
+    static thread_local Id front_id{};
+    static thread_local const std::string* front_name = nullptr;
+
+    if(front_name && front_id == id)
+        return *front_name;
+
     std::scoped_lock lock(cache_mutex);
     if (const auto it = cache.find(id); it != cache.end())
+    {
+        front_id   = id;
+        front_name = &it->second;
         return it->second;
+    }
 
-    std::string value = lookup(id);
-    cache.emplace(id, value);
-    return value;
+    const std::string& stored = cache.emplace(id, lookup(id)).first->second;
+    front_id   = id;
+    front_name = &stored;
+    return stored;
 }
 
 #if PRELOAD_UIDGID && defined(HAVE_GETPWENT_PWD_H) && defined(HAVE_GETPWENT)
