@@ -11,14 +11,14 @@
 | Finding | Assessment |
 | --- | --- |
 | F1 | Confirmed structurally and optimized in this draft. The earlier targeted AArch64 `-w` comparison measured 7.46% lower mean wall time; a later full-branch AArch64 batch measured 55.18% lower on `-w`, but combines F1, color sorting, and other draft changes. |
-| F2 | Partially confirmed: width estimation and rendering can repeat field work; the cost depends on selected fields and layout. |
+| F2 | Confirmed structurally and partly optimized. Repeated symlink resolution and per-call name copies are removed, and passwd/group repeats now stay out of the shared map; the duplicated size-column formatting was measured at ≤0.5% and deliberately left unchanged (see the F2 follow-up section). |
 | F3 | Confirmed structurally and optimized: readlink reuse measured 7.12–9.18% lower mean wall time in the earlier AArch64 comparison; a successful-target-stat cache reduced a local 50k-link workload by 9.62% mean wall time and halved target `stat()` calls. Both results are fixture-specific. |
 | F4 | Confirmed structurally: `Inodemap` receives every non-directory passed to `UpdateEstimations`, without an `st_nlink > 1` check. |
 | F5 | Character-at-a-time output path confirmed; syscall savings from `setvbuf` are not established. |
 | F6 | The stated locale-based explanation is not supported by the current formatter. A `to_chars` trial for link counts showed no measurable speedup on the corrected local benchmark. |
 | F7 | Confirmed for the legacy `Gprintf` path: a `PrintfProxy` parses the format on each invocation. `Gformat` bypasses it when available. |
 | F8 | The supplied date-cost estimates are overstated or describe the wrong branches; a corrected local date-width benchmark measured 31.54% lower mean wall time on its targeted workload. |
-| F9 | Partially confirmed: cache hits still lock and copy the cached string; NSS locking is limited to misses. |
+| F9 | Partially confirmed and partly optimized: cache hits still copy the cached string, but this draft now answers repeated ids from a thread-local one-entry cache without taking the shared lock; NSS locking is limited to misses. |
 | F10 | Partially confirmed: full paths and path-based metadata lookups are used; the claimed temporary allocation does not apply to `std::string` callers. |
 | F11 | Mutexes are present in the normal GCC build; this confirms a possible cost, not that the lock is a measured hotspot. |
 | Additional color-sort path | `c/C` calls the DFA twice per comparator invocation; a per-entry key cache improved local 50k-file `--sort=c`/`--sort=pcm` timings by 24.77%/29.22% mean. |
@@ -193,3 +193,57 @@ The corrected 50,000-file benchmark used the attached field specification `-f.h_
 A 50,000-symlink fixture pointed every link at the same target. Baseline and target-cache candidate were dynamic Release/LTO binaries differing only by the target-stat cache; 30 randomized subprocess runs per version used `-l3 -A -c -X80 -f.f`. Mean/median wall time fell from 378.918/370.942 ms to 342.456/335.488 ms (9.62% lower mean); the rough independent-sample Welch 95% interval for improvement was 6.51–12.73%. A custom `LD_PRELOAD` counter filtered calls to the resolved `targets/file` path and recorded 100,000 target `stat()` calls for the baseline versus 50,000 for the candidate (two per link reduced to one per link); the single-link probe likewise changed from two calls to one. This confirms the repeated target-stat path and the intended call-count reduction, while the wall-time result remains specific to this synthetic fixture and host. Heaptrack was unavailable, so the memory overhead of the lazily allocated per-symlink cache was not measured.
 
 `scripts/profile-hot-path.sh` ran locally against the target-stat and color-sort baseline/candidate pairs, but its built-in `-l0`/`-l3` workload does not exercise `c/C`; Hyperfine, perf, strace, and Heaptrack were also unavailable, so those probes were recorded as `NOT RUN`. The targeted randomized subprocess timings above are supplementary, not substitutes for the configured CI profiler. The PR workflow is configured to upload a report on each push; the prior artifact download failed with `EOF`, so this audit contains no CI profile for the current color-sort change. CMake was installed outside the repository for local validation; no project dependency or workflow was added or changed.
+
+### F2 follow-up: estimation-versus-rendering duplicates (2026-11-05)
+
+This series isolates the F2 duplicates on x86_64 (Debian 12, GCC 12.2.0, CMake 4.4.4, Release/LTO binaries built by the project's own CMake lists). Two independent instruments were used, because wall-clock differences of a few percent are not resolvable on a shared two-vCPU host:
+
+- `rdtsc` counters compiled into the estimating and the rendering passes, reporting cumulative cycles and call counts per instrumented call site. The build is otherwise identical to the Release build; each instrumented region carries roughly 25 cycles of measurement overhead, so the totals below are slight overestimates.
+- `LD_PRELOAD` counters for `readlink`/`stat`/`lstat`/`malloc`, plus `maxrss` taken from `wait4()` for each child process.
+
+Fixtures were flat directories of 20,000 entries: regular files with short names, regular files with 60-character names, and symlinks, plus a mixed directory with valid, absolute, relative, dangling, directory and chained links, a FIFO, a socket and hardlinks.
+
+#### What the duplication costs
+
+Default long listing (`-A -c`) of 20,000 regular files, TSC cycles per run and per phase:
+
+| Instrumented site | Estimating pass | Rendering pass |
+| --- | ---: | ---: |
+| Size column formatting (`GetSize`) | 1.69M / 20,002 calls | 2.01M / 20,002 calls |
+| Passwd/group lookup (`Getpwuid`/`Getgrgid`) | 2.32M / 40,004 calls | 2.46M / 40,004 calls |
+| Name column (`GetName`) | 4.61M / 20,002 calls | 11.17M / 20,002 calls |
+
+Against a whole run of roughly 50–66 ms, the repeated size formatting is about 1.1 ms (2.2%) across both passes and the repeated passwd/group lookups about 1.45 ms (2.9%); a fix can only recover the half that the second pass repeats.
+
+#### Changes made
+
+| Commit | Change | Structural effect | Measured effect |
+| --- | --- | --- | --- |
+| `a4013af` | `LinkTargetStatCache` now holds the link text, the fixed target path and the `stat()`/`lstat()` results; `GetName()` and `GetSize()` share it | `-l3`, 20k symlinks: `readlink` 80,000 → 20,000, `stat` 60,000 → 20,000, `lstat` 40,002 unchanged | `-l3` 173.33 → 111.12 ms (−34.6%), `-l3 -C` 155.53 → 91.15 ms (−39.6%) |
+| `776bf35` | `GetName()` takes a `std::string_view` and prints from it | 20k long names: `malloc` 180,356 → 100,356 (default) and 100,292 → 20,292 (`-w -C`) | 2.0–4.0% lower wall time across all layouts |
+| `2954ae2` | Thread-local one-entry front cache in `cached_lookup()` | Passwd/group cycles, both passes: 4.79M → 3.45M | ≈0.8% of the run; RSS unchanged (20,232 → 20,208 KiB on the symlink fixture) |
+| `bb9cc29` | Cache keeps a 24-byte `StatSummary` plus the `lstat` mode instead of two `struct stat` and a copy of the item path | Same syscall counts as `a4013af` | Peak RSS for `-l3`, 20k symlinks: 20.2 → 13.3 MB (11.7 MB without the cache) |
+
+Wall-clock series for the complete branch (25 interleaved runs per configuration, median of per-run ratios, approximate 95% interval from the sample standard deviation):
+
+| Workload | Baseline → draft (ms) | Change |
+| --- | ---: | ---: |
+| 20k symlinks, `-l3` | 173.33 → 111.12 | −34.6% (−35.7…−33.5) |
+| 20k symlinks, `-l3 -C` | 155.53 → 91.15 | −39.6% (−41.3…−37.9) |
+| 20k symlinks, `-l0` | 50.56 → 49.26 | −2.8% (−4.3…−1.3) |
+| 20k symlinks, `-l3 -w` | 31.41 → 30.18 | −3.9% (−4.7…−3.1) |
+| 20k files, default | 50.27 → 49.33 | −2.7% (−5.0…−0.3) |
+| 20k files, `-w` | 34.44 → 33.55 | −3.1% (−5.7…−0.6) |
+| 20k files, `-w -C` | 37.08 → 36.51 | −2.2% (−3.9…−0.6) |
+| 20k long names, default | 67.32 → 64.90 | −2.0% (−2.8…−1.3) |
+| 20k long names, `-w` | 57.38 → 55.38 | −2.8% (−4.1…−1.6) |
+| 20k long names, `-w -C` | 53.83 → 52.89 | −1.5% (−2.4…−0.5) |
+
+#### Experiments rejected on measurement
+
+- **Formatting the size column once instead of twice.** A per-item `SizeTextCache` (formatted text plus the colour decision, keyed by separator variant and the item's `st_mode`/`st_size`/`st_rdev`) was implemented and verified byte-identical over 282 general comparisons and 160 additional `--format` comparisons covering `.s`, `.z`, `.S` and thousands separators with `-w`, `-C` and `-e`. It cannot recover more than the rendering pass's 2.01M cycles, and after paying for the extra string copies the net gain is ≤0.5%, while peak RSS rose by 0.75–3.5 MB (20k files 10,688 → 14,148 KiB; 20k symlinks 20,228 → 23,168 KiB; long names 12,780 → 14,788 KiB). Reverted, not committed.
+- **Carrying the resolved owner/group names per item.** Removing the rendering pass's repeat lookups (`pwgr` 2.45M → 0 cycles, ≈1.5%) costs 1.0–1.5 MB of peak RSS because `StatItem` grows inside a doubling vector (20k files 10,688 → 11,700 KiB; 20k symlinks 20,228 → 21,748 KiB); storing interned pointers instead of strings still cost about 1 MB on the regular-file fixture. The thread-local front cache was kept instead: it recovers about half the gain at no measurable memory cost.
+
+Verification for this series: Release and Debug/ASan+UBSan CTest pass 15/15, sanitizer runs over the four fixtures are clean, and 282 byte-for-byte comparisons of baseline versus draft output (`-a0`…`-a6` with `-A -c`, `-w`, `-C`, `-w -C`; `-l0`…`-l5`; `-e`; default and custom `--format` field orders on four directories) produced no differences. Hyperfine, perf, strace and Heaptrack are still unavailable on this host, so `scripts/profile-hot-path.sh` again recorded `NOT RUN` for them.
+
+The cycle counts come from instrumented builds and the wall-clock figures from separate Release binaries, so the two are not combined into a single percentage; all numbers describe this host, compiler, build and fixture.
