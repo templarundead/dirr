@@ -158,8 +158,34 @@ template<bool print>
 std::size_t WidthPrintHelper(std::size_t maxlen, std::string_view buf, bool fill)
 {
     std::size_t column = 0, bytepos = 0;
-    for(; column<maxlen && bytepos<buf.size(); ++column)
+    while(column<maxlen && bytepos<buf.size())
     {
+        // Fast path: a run of printable ASCII occupies one column per byte and
+        // needs neither the UTF-8 decoder nor the unprintable-character rules.
+        // Anything else starts the next iteration at the general path.
+        {
+            const std::size_t room  = maxlen - column;
+            const std::size_t avail = buf.size() - bytepos;
+            const std::size_t limit = room < avail ? room : avail;
+            const char* const data  = buf.data() + bytepos;
+            std::size_t n = 0;
+            while(n < limit)
+            {
+                const unsigned char c = static_cast<unsigned char>(data[n]);
+                if(c < 32 || c >= 0x7F) break;
+                ++n;
+            }
+            if(n > 0)
+            {
+                if(print)
+                    for(std::size_t k = 0; k < n; ++k)
+                        Gputch(data[k]);
+                bytepos += n;
+                column  += n;
+                continue;
+            }
+        }
+
         /* Detect UTF8 sequence */
         auto utf8 = ParseUTF8([&](unsigned index) -> int
         {
@@ -218,6 +244,7 @@ std::size_t WidthPrintHelper(std::size_t maxlen, std::string_view buf, bool fill
                     Gputch('?');
             }
         }
+        ++column;
     }
     //fprintf(stderr, "Printed %zu bytes: <%.*s>, %zu/%zu columns, fill=%s\n", bytepos, (int)bytepos, buf.data(), column, maxlen, fill?"Y":"N");
     if(fill && column < maxlen)
